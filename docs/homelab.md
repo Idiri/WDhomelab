@@ -284,7 +284,7 @@ ssh kali "nmap 192.168.1.203"
 | ✅ Ferdig | Baseline snapshot tatt — VM 101, 300 + vzdump CT 200, 201, 202 | Gjort 1. juli |
 | ✅ Ferdig | Dokumenter OPNsense firewall-regler (inter-segment policy vmbr0↔vmbr1) | [Se audit-seksjon](#opnsense-firewall-audit--16-juli-2026) — ⚠️ ingen inter-segment filtrering konfigurert |
 | ✅ Ferdig | Push Ansible-playbooks til Git for backup | Gjort 16. juli — Ansible Vault-kryptert, GitHub: Idiri/WDhomelab |
-| 🔴 Høy | Legg til OPNsense-regel: blokker 10.0.0.x → 192.168.1.x | Ikke gjort — Metasploitable/lab-net har i dag ubegrenset rute til hjemmenettet |
+| ✅ Ferdig | Legg til OPNsense-regel: blokker 10.0.0.x → 192.168.1.x | Gjort 16. juli — verifisert fra Metasploitable: ping 192.168.1.203 → 100% pakketap, curl → couldn't connect to host (tidsavbrutt, ingen respons — konsistent med silent drop). OPNsense LAN (10.0.0.1) og L2-noder (10.0.0.x) upåvirket. |
 | 🔴 Høy | Begrens OPNsense admin-tilgang (port 80/443/22 på LAN) til kun Kali (10.0.0.10) | Ikke gjort |
 | 🔴 Høy | Bytt fra root SSH til dedikerte brukere på alle noder | Ikke gjort |
 | 🟠 Medium | Offensiv testing av Nginx 1.22.1 på web-01 | Ikke startet |
@@ -304,7 +304,7 @@ ssh kali "nmap 192.168.1.203"
 | Proxmox web UI | ✅ Låst | iptables blokkerer 8006 på LAN — kun 100.108.236.64:8006 via Tailscale |
 | SSH-autentisering | ✅ Bekreftet | PasswordAuthentication no på alle noder — verifisert 1. juli |
 | SSH-bruker | ⚠️ Root | Bør byttes til dedikerte brukere |
-| Firewall-regler | ⚠️ Udefinert | pfctl-audit kjørt 16. juli — standard LAN-regel tillater all trafikk fra 10.0.0.x til 192.168.1.x. Ingen inter-segment blokkering konfigurert. |
+| Firewall-regler | ✅ Sikret | Inter-segment blokkering aktiv: 10.0.0.x → 192.168.1.x blokkert i OPNsense — verifisert 16. juli. OPNsense admin-porter (80/443/22) på LAN fortsatt åpne for alle 10.0.0.x — begrensning til kun Kali (10.0.0.10) gjenstår. |
 | iptables persistens | ✅ Bekreftet | Lagret til /etc/iptables/rules.v4 — overlever reboot |
 | Proxmox REST API på vmbr1 | ✅ Sikret | vmbr1 har ingen host-IP — ingen rute fra 10.0.0.x til hypervisoren. Port 8006 og 3128 låst til tailscale0 via iptables. |
 | Logging/SIEM | ❌ Mangler | Ingen synlighet på nettverksnivå |
