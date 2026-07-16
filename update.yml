@@ -1,0 +1,9 @@
+---
+- name: Oppdater Proxmox-host
+  hosts: proxmox
+  become: yes
+  tasks:
+    - name: Oppdater apt cache og oppgrader pakker
+      apt:
+        update_cache: yes
+        upgrade: dist

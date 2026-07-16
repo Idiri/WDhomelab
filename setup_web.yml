@@ -1,0 +1,13 @@
+---
+- name: Konfigurer web-01 via Host-exec
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Oppdater apt cache i container 201
+      command: "ssh root@192.168.1.50 pct exec 201 -- apt update"
+
+    - name: Installer Nginx i container 201
+      command: "ssh root@192.168.1.50 pct exec 201 -- apt install -y nginx"
+
+    - name: Start Nginx
+      command: "ssh root@192.168.1.50 pct exec 201 -- systemctl start nginx"

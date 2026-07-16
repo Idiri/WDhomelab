@@ -1,0 +1,15 @@
+---
+- name: Konfigurer Kali container 202 via host-exec
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Oppdater apt cache i Kali container 202
+      command: ssh root@192.168.1.50 pct exec 202 -- apt update
+
+    - name: Installer Kali headless tools
+      command: ssh root@192.168.1.50 pct exec 202 -- apt install -y kali-linux-headless nmap metasploit-framework sqlmap
+
+    - name: Enable og start SSH i Kali container 202
+      command: ssh root@192.168.1.50 pct exec 202 -- sh -c "systemctl enable ssh && systemctl start ssh"
