@@ -1,6 +1,6 @@
-# Homelab 2.5
+# Homelab 2.6
 
-**Versjon:** 2.5 — 24. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.4 — 16. juli 2026
+**Versjon:** 2.6 — 25. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.5 — 24. juli 2026
 
 ---
 
@@ -73,6 +73,17 @@
 | Docker-i-LXC krever nesting=1 | Uten --features nesting=1 på pct create feiler Docker-image-pull med "permission denied" ved mount av overlayfs-laget (unprivileged container kan ikke mounte overlay uten nesting). Lagt til i deploy_homepage.yml for reproduserbarhet |
 | DOCKER-USER-kjeden er nødvendig for å begrense docker-publiserte porter | En ren INPUT-kjede-regel er IKKE nok: Docker DNAT-omskriver destinasjonen (f.eks. -d 192.168.1.204) til container-broens interne IP i PREROUTING, før pakken når INPUT eller FORWARD — så en INPUT-regel matchet på den opprinnelige IP-en treffer aldri. Reell sperre må stå i DOCKER-USER (kjeden Docker garanterer kjøres FØR sine egne genererte regler), matchet på kilde+interface, ikke destinasjon |
 | Golden Path oppdatert | Nytt steg 7: verifiser Homepage-dashboard (curl mot 192.168.1.204:3000) |
+
+### Changelog (v2.5 → v2.6)
+
+| Endring | Detalj |
+|---|---|
+| Ekstern Tailscale-tilgang til HELE 192.168.1.0/24 bekreftet brutt siden ukjent tidspunkt (ikke bare Homepage) | net.ipv4.ip_forward sto til 0 på Proxmox-hosten og var aldri persistert i /etc/sysctl.d/ — sannsynligvis nullstilt ved en reboot (trolig i forbindelse med den fysiske flyttingen i v2.4, 16. juli). `tailscale up --advertise-routes` advarte selv da den ble kjørt på nytt: "Subnet routes and exit nodes may not work correctly". Ingen ekstern (av-LAN) Tailscale-klient kunne i praksis nå NOE på 192.168.1.0/24 via subnet router-funksjonen i denne perioden — udagdaget fordi all testing skjedde fra hjemme-LAN-et, der trafikk aldri går via Tailscale i utgangspunktet (se neste punkt) |
+| Root cause for "Homepage unreachable from Mac via Tailscale" identifisert: testmetoden var ugyldig, ikke brannmuren | Mac-en som testet var fysisk på samme LAN som target (192.168.1.118/24, direkte tilkoblet rute via en0 — Tailscale-ruten taper alltid mot en direkte tilkoblet rute for samme subnet). All trafikk til både .203 (fungerte) og .204 (feilet) gikk derfor som ren L2-bridget LAN-trafikk med klientens ekte kilde-IP — ALDRI via tailscale0. Koordinert pakkefangst (tailscale0 + vmbr0 samtidig) bekreftet: 0 pakker på tailscale0 for begge tester, kilde-IP 192.168.1.118 (Mac-ens ekte LAN-IP) på vmbr0 for begge. .203 "fungerte" utelukkende fordi den ikke har noen Tailscale-sperre i det hele tatt — det ga et falskt inntrykk av at Tailscale-ruting var involvert og fungerte |
+| Manglende rute-godkjenning oppdaget og fikset | tailscaled sin AdvertiseRoutes-pref var tom/tapt på Proxmox-hosten. Selv etter `tailscale up --advertise-routes=192.168.1.0/24 --accept-routes` viste PrimaryRoutes fortsatt None på begge sider av tailnettet — ruten må godkjennes manuelt i Tailscale admin console (Machines → proxy → Edit route settings) med mindre auto-approvers er satt opp i ACL-en (ikke tilfelle her). Godkjent manuelt, propagerte umiddelbart etterpå |
+| net.ipv4.ip_forward og net.ipv6.conf.all.forwarding persistert | Ny fil /etc/sysctl.d/99-tailscale.conf (ip_forward=1, ipv6 forwarding=1), anvendt med `sysctl -p`. Overlever nå reboot — samme klasse hull som vmbr1-IP-en i v2.4 (kritisk oppsett satt manuelt/transient, aldri skrevet til persistent konfig) |
+| Layer 1 (Proxmox-host FORWARD-regel for port 3000) bekreftet å være dead code, ikke et reelt sikkerhetslag | Tailscale sin egen auto-genererte ts-forward-kjede kjøres UBETINGET som første regel i FORWARD-kjeden og ACCEPTerer (terminalt, MARK+ACCEPT) ALL trafikk som ankommer på tailscale0 til hele det annonserte subnettet — uansett destinasjon eller port — før pakken noensinne når de skreddersydde port 3000-reglene lenger ned i FORWARD-kjeden. Bekreftet med tellere: etter en bekreftet vellykket test viste FORWARD sin egen ACCEPT-regel (tailscale0→192.168.1.204:3000) og DROP-regelen begge fortsatt 0 pakker, mens ts-forward sin ACCEPT-regel viste 36 pakker. Det "to-lags"-forsvaret dokumentert i v2.5 har derfor reelt sett aldri vært to uavhengige lag — DOCKER-USER-regelen i CT 203 (kilde == 192.168.1.50) er og har alltid vært den ENESTE reelle håndhevingen for dette porten. FORWARD-regelen for port 3000 er ufarlig å beholde, men villedende dokumentasjon (se Åpne punkter) |
+| Fiks verifisert | Etter sysctl-fiks + rute-godkjenning: siden en reell av-LAN-test ikke var praktisk mulig midt i økten, ble en midlertidig host-rute (`route add -host 192.168.1.204 -interface utun6`) lagt til på Mac-en for å tvinge trafikk gjennom Tailscale-tunnelen og simulere en genuin ekstern klient — curl mot 192.168.1.204:3000 ga HTTP 200, deretter fjernet ruten igjen. LAN-blokkeringen ble retestet samtidig: curl fra mgmt-node (192.168.1.200, ekte LAN-kilde, ikke via Tailscale) mot samme URL feiler fortsatt (HTTP 000) — DOCKER-USER-sperren er uendret og fungerer som før |
 
 ---
 
@@ -369,6 +380,7 @@ git push
 | ✅ Ferdig | Proxmox REST API/spiceproxy eksponert på vmbr1 | Gjort 16. juli — port 3128 låst, vmbr1 har ingen host-IP |
 | ✅ Ferdig | Dokumenter OPNsense firewall-regler (inter-segment policy vmbr0↔vmbr1) | Gjort 16. juli — se pfctl-audit i denne loggen |
 | ✅ Ferdig | Legg til OPNsense-regel: blokker 10.0.0.x → 192.168.1.x | Gjort 16. juli — verifisert fra Metasploitable |
+| 🟡 Lav | Rydd opp/fjern misvisende FORWARD-regel for port 3000 på Proxmox-host | Nytt 25. juli — regelen er dead code (ts-forward ACCEPTerer terminalt først, se v2.6-changelog). Ufarlig å beholde, men bør enten fjernes eller kommenteres tydelig som ikke-funksjonell så neste debugging-økt ikke bruker tid på samme feilslutning |
 | 🔴 Høy | Bytt fra root SSH til dedikerte brukere på alle noder | Ikke gjort |
 | 🔴 Høy | Begrens OPNsense admin-tilgang (port 22/80/443 på LAN) til kun Kali | Forsøkt 16. juli, ikke løst — OPNsense sine auto-genererte service-regler overstyrer både interface- og Floating-regler. Krever WAN-side omstrukturering (endre Listen Interfaces + eksplisitt WAN-regel for Kalis WAN-IP) |
 | 🟠 Medium (delvis adressert) | Skaler ned Ansible API-token til minste privilegium | Nytt 16. juli, delvis adressert 24. juli — Homepage sin dashboard-widget bruker nå en egen minste-privilegium-token (PVEAuditor, les-only). Den OPPRINNELIGE `ansible`-provisjoneringstokenet (root@pam, privsep 0) er IKKE rørt og har fortsatt full root-ekvivalent tilgang — det gjenstår å skalere ned |
@@ -392,14 +404,14 @@ git push
 | Internett-eksponering | ✅ Ingen | Ingen åpne porter mot internett |
 | Nettverkssegmentering | ✅ OK | vmbr0 / vmbr1 med OPNsense mellom |
 | Inter-segment filtrering (10.0.0.x → 192.168.1.x) | ✅ Sikret | Blokkeringsregel aktiv og verifisert 16. juli — lab-nettet kan ikke lenger nå hjemmenettet |
-| Ekstern tilgang | ✅ Tailscale | Subnet router på Proxmox-host |
+| Ekstern tilgang | ✅ Tailscale | Subnet router på Proxmox-host. NB: ip_forward-regresjon rettet 25. juli — se v2.6-changelog. Rute til 192.168.1.0/24 nå persistert og godkjent |
 | Proxmox web UI | ✅ Låst (med to navngitte unntak) | iptables blokkerer 8006 på LAN generelt — kun 100.108.236.64:8006 via Tailscale, pluss eksplisitte kildeunntak for 192.168.1.200 (mgmt-node, Ansible-provisjonering) og 192.168.1.204 (homepage, dashboard-widget). Se Merk (24. juli) |
 | Proxmox REST API/spiceproxy på vmbr1 | ✅ Sikret | vmbr1 har ingen host-IP — ingen rute fra 10.0.0.x til hypervisoren. Port 8006 og 3128 begge låst til tailscale0 via iptables |
 | SSH-autentisering | ✅ Bekreftet | PasswordAuthentication no på alle noder — verifisert 1. juli |
 | SSH-bruker | ⚠️ Root | Bør byttes til dedikerte brukere |
 | OPNsense admin-porter (22/80/443) på LAN | ⚠️ Åpne for hele 10.0.0.x | Alle lab-nett-noder kan nå OPNsense sin GUI/SSH, ikke bare Kali. Kompenserende kontroll: nøkkelbasert SSH + påloggingskrav på GUI. Reell fiks krever WAN-side omstrukturering (se Åpne punkter) |
 | iptables persistens | ✅ Bekreftet | Lagret til /etc/iptables/rules.v4 — overlever reboot, verifisert på Proxmox-host og CT 203 |
-| Homepage-dashboard (CT 203, port 3000) | ✅ Sikret | To lag: FORWARD-regel på Proxmox-host (kun tailscale0), DOCKER-USER-regel i CT 203 (kun kilde 192.168.1.50). Verifisert direkte: mgmt-node (annen LAN-kilde) blokkert, Proxmox-host sluppet gjennom |
+| Homepage-dashboard (CT 203, port 3000) | ✅ Sikret | Reell håndheving er ETT lag: DOCKER-USER-regelen i CT 203 (kun kilde 192.168.1.50). FORWARD-regelen på Proxmox-hosten er dokumentert dead code — Tailscale sin egen ts-forward-kjede ACCEPTerer terminalt før den nås (se v2.6-changelog). Verifisert 25. juli: simulert av-LAN Tailscale-klient (tvunget rute via utun) sluppet gjennom (HTTP 200), ekte LAN-kilde uten Tailscale (mgmt-node) fortsatt blokkert (HTTP 000) |
 | Ansible API-token privilegier | ⚠️ Delvis forbedret | Det opprinnelige `ansible`-provisjoneringstokenet har fortsatt full root-ekvivalent tilgang. Ny, separat minste-privilegium-token (PVEAuditor, les-only) innført 24. juli for Homepage sin dashboard-widget — men dette er et NYTT, ekstra token, ikke en nedskalering av det gamle |
 | Git/secrets-hygiene | ✅ Sikret | proxmox_vars.yml og homepage_vars.yml Ansible Vault-kryptert, .git-credentials og .gitconfig gitignored, ingen klartekst-hemmeligheter i git-historikk |
 | Logging/SIEM | ❌ Mangler | Ingen synlighet på nettverksnivå |
