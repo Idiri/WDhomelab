@@ -1,0 +1,14 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - "192.168.1.204:3000:3000"
+    volumes:
+      - ./config:/app/config
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: 192.168.1.204:3000
+    env_file:
+      - path: .env # ikke i git — pushet separat fra Vault, se push_homepage_secrets.yml
+        required: false # tillater første oppstart før hemmeligheter er fylt inn

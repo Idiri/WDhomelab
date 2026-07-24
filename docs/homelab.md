@@ -1,6 +1,6 @@
-# Homelab 2.4
+# Homelab 2.5
 
-**Versjon:** 2.4 — 16. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.3 — 1. juli 2026
+**Versjon:** 2.5 — 24. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.4 — 16. juli 2026
 
 ---
 
@@ -61,6 +61,19 @@
 | Inter-segment blokkeringsregel lagt til og verifisert | Ny LAN-regel: blokker 10.0.0.0/24 → 192.168.1.0/24, plassert korrekt over default-regelen. Verifisert fra Metasploitable: ping og curl mot 192.168.1.203 feiler nå (silent drop — 100% pakketap, ingen ICMP-feil), OPNsense LAN (10.0.0.1) og øvrige L2-noder upåvirket |
 | OPNsense admin-tilgang (port 22/80/443) — forsøkt, ikke fullført | Forsøkte å begrense adminporter til kun Kali (10.0.0.10) via egne LAN-regler, deretter Floating-regler. Oppdaget at OPNsense auto-genererer ubetingede "pass from any to (self)" regler for ssh/http/https på ethvert lyttende interface, med HØYERE prioritet enn både vanlige interface-regler og Floating-regler. Besluttet å akseptere som dokumentert restrisiko (se Sikkerhetsstatus) — reell fiks krever WAN-side omstrukturering, utsatt til senere økt |
 
+### Changelog (v2.4 → v2.5)
+
+| Endring | Detalj |
+|---|---|
+| Homepage-dashboard deployet (CT 203) | Ny LXC "homepage" på vmbr0, 192.168.1.204, 1 kjerne/1GB RAM/6GB disk, Debian 12. Kjører gethomepage.dev via Docker Compose, bundet til containerens egen LAN-IP (192.168.1.204:3000), ikke 0.0.0.0. Ingen Docker-socket mountet (ingen auto-discovery i bruk) |
+| Ny minste-privilegium Proxmox-token for dashboard | homepage-readonly@pve, tildelt det innebygde PVEAuditor-rådet (les-only stats — ingen VM/CT-administrasjon). Egen fil homepage_vars.yml, Ansible Vault-kryptert (samme AES256-mønster som proxmox_vars.yml). Selve token-opprettelsen ble gjort manuelt direkte på Proxmox-hosten — aldri limt inn i en AI-assistert samtale |
+| iptables-regel for port 3000 (Homepage) | To lag: (1) FORWARD-regel på Proxmox-hosten — ACCEPT kun via tailscale0 mot 192.168.1.204:3000, DROP ellers; (2) DOCKER-USER-regel inne i CT 203 — ACCEPT kun fra kilde 192.168.1.50 (hva Tailscale-forwardet trafikk fremstår som etter SNAT), DROP ellers. Begge persistert |
+| Regresjon oppdaget og fikset: mgmt-node kunne ikke lenger provisjonere via Ansible-API | Port 8006-låsingen fra v2.2 blokkerte også mgmt-node selv (ikke bare eksterne kilder) — community.general.proxmox-modulen har derfor vært brutt siden 16. juli uten at noen merket det, fordi ingen ny CT er opprettet i mellomtiden. Lagt til eksplisitt iptables-unntak for 192.168.1.200 (mgmt-node) på port 8006, samme unntak lagt til for 192.168.1.204 (Homepage, for Proxmox-widgeten) |
+| community.general.proxmox-modulen bekreftet ikke-fungerende for container-opprettelse | Feiler med "500 Internal Server Error: Only root can pass arbitrary filesystem paths" ved bruk av API-token (uavhengig av privsep) — PVE-begrensning på selve token-autentisering, ikke et rettighetsproblem. deploy_ct.yml sitt mønster kunne derfor ikke gjenbrukes som først planlagt. deploy_homepage.yml bruker i stedet samme "pct create over ssh"-mønster som deploy_kali.yml (bekreftet fungerende — CT 202 ble opprettet slik) |
+| Docker-i-LXC krever nesting=1 | Uten --features nesting=1 på pct create feiler Docker-image-pull med "permission denied" ved mount av overlayfs-laget (unprivileged container kan ikke mounte overlay uten nesting). Lagt til i deploy_homepage.yml for reproduserbarhet |
+| DOCKER-USER-kjeden er nødvendig for å begrense docker-publiserte porter | En ren INPUT-kjede-regel er IKKE nok: Docker DNAT-omskriver destinasjonen (f.eks. -d 192.168.1.204) til container-broens interne IP i PREROUTING, før pakken når INPUT eller FORWARD — så en INPUT-regel matchet på den opprinnelige IP-en treffer aldri. Reell sperre må stå i DOCKER-USER (kjeden Docker garanterer kjøres FØR sine egne genererte regler), matchet på kilde+interface, ikke destinasjon |
+| Golden Path oppdatert | Nytt steg 7: verifiser Homepage-dashboard (curl mot 192.168.1.204:3000) |
+
 ---
 
 Bygget på Proxmox VE (192.168.1.50) for offensiv sikkerhetstesting og data engineering. Målet er et kontrollert miljø der angrepsscenarier kan kjøres uten risiko for produksjonsnettet.
@@ -95,6 +108,7 @@ OPNsense fungerer som gateway og DHCP-server mellom segmentene. Kali er dual-hom
 | 200 | mgmt-node | LXC | 192.168.1.200 | — | Ansible-kontrollnode | ✅ Running |
 | 201 | web-01 | LXC | 192.168.1.203 | — | Nginx 1.22.1 webserver (mål) | ✅ Running |
 | 202 | kali-01 | LXC | 192.168.1.202 | 10.0.0.10/24 | Kali Linux, angrepsnode | ✅ Running |
+| 203 | homepage | LXC | 192.168.1.204 | — | Homepage-dashboard (gethomepage.dev), kun via Tailscale | ✅ Running |
 | 300 | metasploitable | VM (Linux) | — | 10.0.0.176/24 (DHCP) | Sårbart mål | ✅ Running |
 | 9001 | kali-template | VM | — | vmbr1 | Ren Kali-template | ⏹ Stopped |
 
@@ -120,20 +134,34 @@ Proxmox web UI: https://100.108.236.64:8006 (ikke 192.168.1.50:8006)
 
 **Merk (16. juli):** Etter lengre nedetid (fysisk flytting/rengjøring) viste noden som "offline, last seen 1d ago" i `tailscale status` fra Mac-en. Dette var ikke en Tailscale-feil, men ganske enkelt at hosten var fysisk avslått. Etter oppstart re-autentiserte Tailscale automatisk og noden kom tilbake som active.
 
-Port 8006 og 3128 er låst med iptables — kun tilgjengelig via tailscale0:
+Port 8006 og 3128 er låst med iptables — kun tilgjengelig via tailscale0, pluss to
+navngitte LAN-unntak lagt til 24. juli (se **Merk (24. juli)** under):
 
 ```bash
 # Disse reglene er aktive og lagret i /etc/iptables/rules.v4
 iptables -I INPUT -i tailscale0 -p tcp --dport 8006 -j ACCEPT
+iptables -I INPUT -s 192.168.1.200 -p tcp --dport 8006 -j ACCEPT -m comment --comment "mgmt-node ansible provisioning"
+iptables -I INPUT -s 192.168.1.204 -p tcp --dport 8006 -j ACCEPT -m comment --comment "homepage dashboard widget"
 iptables -I INPUT -p tcp --dport 8006 -j DROP
 iptables -I INPUT -i tailscale0 -p tcp --dport 3128 -j ACCEPT
 iptables -I INPUT -p tcp --dport 3128 -j DROP
 ```
 
-- 192.168.1.50:8006 → ❌ timed out (blokkert for hele LAN-et)
+- 192.168.1.50:8006 → ❌ timed out for de fleste LAN-kilder
+- 192.168.1.200 (mgmt-node) og 192.168.1.204 (homepage) → ✅ eksplisitt unntatt (se under)
 - 100.108.236.64:8006 → ✅ fungerer (kun via Tailscale)
 - 10.0.0.x:8006 og :3128 → ❌ strukturelt uoppnåelig (vmbr1 har ingen host-IP)
 - Ingen åpne porter mot internett
+
+**Merk (24. juli):** Under utrulling av Homepage-dashbordet (CT 203) ble det oppdaget
+at port 8006-låsingen fra v2.2 hadde blokkert **mgmt-node selv** siden den ble
+innført — `community.general.proxmox`-modulen (brukt av `deploy_ct.yml`) kobler
+direkte til `https://192.168.1.50:8006` og timet ut, siden mgmt-node ikke er
+Tailscale-medlem. Dette har trolig gjort Ansible-provisjonering via denne modulen
+brutt siden 16. juli uten at noen merket det, fordi ingen ny container er blitt
+opprettet i mellomtiden. Løst med et navngitt, kildespesifikt unntak for
+192.168.1.200 — samme mønster brukt for 192.168.1.204 slik at Homepage sin
+Proxmox-widget kan lese status. Ingen andre LAN-kilder enn disse to får gjennom.
 
 ### Dual-homed Kali-oppsett
 
@@ -152,6 +180,11 @@ Kali er den eneste noden som kan nå begge segmenter. Den fungerer også som SSH
 | setup_web.yml | Konfigurerer Nginx på web-01 |
 | hosts.ini | Inventory-fil |
 | proxmox_vars.yml | Variabler for Proxmox-API — Ansible Vault-kryptert (AES256) siden 16. juli |
+| deploy_homepage.yml | Nytt 24. juli — oppretter Homepage-container (CT 203). Bruker "pct create over ssh"-mønster (som deploy_kali.yml), ikke community.general.proxmox-modulen (se v2.4→v2.5-changelog for hvorfor) |
+| setup_homepage.yml | Nytt 24. juli — pusher docker-compose.yml/services.yaml/bootstrap-skript til CT 203 og kjører dem |
+| homepage_bootstrap.sh | Nytt 24. juli — Docker-install, compose up, iptables-låsing inne i CT 203 |
+| push_homepage_secrets.yml | Nytt 24. juli — kjøres manuelt etter at homepage_vars.yml er fylt inn; pusher Proxmox-token til CT 203 som .env uten å logge verdien |
+| homepage_vars.yml | Nytt 24. juli — Proxmox-token for Homepage sin dashboard-widget, Ansible Vault-kryptert (AES256), samme mønster som proxmox_vars.yml |
 
 **Versjonskontroll (nytt 16. juli):** Playbooks er nå et git-repo, pushet til github.com/Idiri/WDhomelab. Vault-passordet ligger kun lokalt på mgmt-node (`/root/.vault_pass`, gitignored, chmod 600) — aldri i repoet.
 
@@ -252,6 +285,9 @@ curl -I http://192.168.1.203
 
 # 6. Verifiser Tailscale
 tailscale status
+
+# 7. Verifiser Homepage-dashboard (nytt 24. juli)
+curl -I http://192.168.1.204:3000
 ```
 
 ### Baseline snapshots & backups
@@ -335,7 +371,7 @@ git push
 | ✅ Ferdig | Legg til OPNsense-regel: blokker 10.0.0.x → 192.168.1.x | Gjort 16. juli — verifisert fra Metasploitable |
 | 🔴 Høy | Bytt fra root SSH til dedikerte brukere på alle noder | Ikke gjort |
 | 🔴 Høy | Begrens OPNsense admin-tilgang (port 22/80/443 på LAN) til kun Kali | Forsøkt 16. juli, ikke løst — OPNsense sine auto-genererte service-regler overstyrer både interface- og Floating-regler. Krever WAN-side omstrukturering (endre Listen Interfaces + eksplisitt WAN-regel for Kalis WAN-IP) |
-| 🟠 Medium | Skaler ned Ansible API-token til minste privilegium | Nytt 16. juli — token har i dag full root-ekvivalent tilgang (privilege separation avskrudd for å matche gammel oppførsel). Bør erstattes med egen PVE-rolle med kun nødvendige rettigheter |
+| 🟠 Medium (delvis adressert) | Skaler ned Ansible API-token til minste privilegium | Nytt 16. juli, delvis adressert 24. juli — Homepage sin dashboard-widget bruker nå en egen minste-privilegium-token (PVEAuditor, les-only). Den OPPRINNELIGE `ansible`-provisjoneringstokenet (root@pam, privsep 0) er IKKE rørt og har fortsatt full root-ekvivalent tilgang — det gjenstår å skalere ned |
 | 🟠 Medium | Restrukturer Ansible git-repo — flytt bort fra /root som repo-rot | Nytt 16. juli — /root som git-rot er en unødvendig blast-radius-risiko. Flytt til f.eks. /root/ansible-homelab/ |
 | 🟠 Medium | Offensiv testing av Nginx 1.22.1 på web-01 | Ikke startet |
 | 🟡 Lav | Legg til SIEM (Wazuh eller Security Onion) for nettverkssynlighet | Ikke startet |
@@ -357,12 +393,13 @@ git push
 | Nettverkssegmentering | ✅ OK | vmbr0 / vmbr1 med OPNsense mellom |
 | Inter-segment filtrering (10.0.0.x → 192.168.1.x) | ✅ Sikret | Blokkeringsregel aktiv og verifisert 16. juli — lab-nettet kan ikke lenger nå hjemmenettet |
 | Ekstern tilgang | ✅ Tailscale | Subnet router på Proxmox-host |
-| Proxmox web UI | ✅ Låst | iptables blokkerer 8006 på LAN — kun 100.108.236.64:8006 via Tailscale |
+| Proxmox web UI | ✅ Låst (med to navngitte unntak) | iptables blokkerer 8006 på LAN generelt — kun 100.108.236.64:8006 via Tailscale, pluss eksplisitte kildeunntak for 192.168.1.200 (mgmt-node, Ansible-provisjonering) og 192.168.1.204 (homepage, dashboard-widget). Se Merk (24. juli) |
 | Proxmox REST API/spiceproxy på vmbr1 | ✅ Sikret | vmbr1 har ingen host-IP — ingen rute fra 10.0.0.x til hypervisoren. Port 8006 og 3128 begge låst til tailscale0 via iptables |
 | SSH-autentisering | ✅ Bekreftet | PasswordAuthentication no på alle noder — verifisert 1. juli |
 | SSH-bruker | ⚠️ Root | Bør byttes til dedikerte brukere |
 | OPNsense admin-porter (22/80/443) på LAN | ⚠️ Åpne for hele 10.0.0.x | Alle lab-nett-noder kan nå OPNsense sin GUI/SSH, ikke bare Kali. Kompenserende kontroll: nøkkelbasert SSH + påloggingskrav på GUI. Reell fiks krever WAN-side omstrukturering (se Åpne punkter) |
-| iptables persistens | ✅ Bekreftet | Lagret til /etc/iptables/rules.v4 — overlever reboot |
-| Ansible API-token privilegier | ⚠️ For bredt | Token har full root-ekvivalent tilgang på Proxmox — bør erstattes med minste-privilegium-rolle |
-| Git/secrets-hygiene | ✅ Sikret | proxmox_vars.yml Ansible Vault-kryptert, .git-credentials og .gitconfig gitignored, ingen klartekst-hemmeligheter i git-historikk |
+| iptables persistens | ✅ Bekreftet | Lagret til /etc/iptables/rules.v4 — overlever reboot, verifisert på Proxmox-host og CT 203 |
+| Homepage-dashboard (CT 203, port 3000) | ✅ Sikret | To lag: FORWARD-regel på Proxmox-host (kun tailscale0), DOCKER-USER-regel i CT 203 (kun kilde 192.168.1.50). Verifisert direkte: mgmt-node (annen LAN-kilde) blokkert, Proxmox-host sluppet gjennom |
+| Ansible API-token privilegier | ⚠️ Delvis forbedret | Det opprinnelige `ansible`-provisjoneringstokenet har fortsatt full root-ekvivalent tilgang. Ny, separat minste-privilegium-token (PVEAuditor, les-only) innført 24. juli for Homepage sin dashboard-widget — men dette er et NYTT, ekstra token, ikke en nedskalering av det gamle |
+| Git/secrets-hygiene | ✅ Sikret | proxmox_vars.yml og homepage_vars.yml Ansible Vault-kryptert, .git-credentials og .gitconfig gitignored, ingen klartekst-hemmeligheter i git-historikk |
 | Logging/SIEM | ❌ Mangler | Ingen synlighet på nettverksnivå |

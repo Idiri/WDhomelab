@@ -1,0 +1,36 @@
+---
+- Infrastruktur:
+    - Proxmox:
+        icon: proxmox.png
+        href: https://192.168.1.50:8006
+        description: Hypervisor
+        widget:
+          type: proxmox
+          url: https://192.168.1.50:8006
+          username: "{{HOMEPAGE_VAR_PROXMOX_TOKEN_ID}}"
+          password: "{{HOMEPAGE_VAR_PROXMOX_TOKEN_SECRET}}"
+
+    - OPNsense:
+        icon: opnsense.png
+        href: https://10.0.0.1
+        description: >-
+          Firewall/gateway for lab-nettet. Lenken fungerer kun fra Kali eller via
+          den eksisterende SSH-tunnelen (ssh -L 8443:10.0.0.1:443 kali) — ingen
+          direkte rute fra vmbr0.
+
+    - web-01:
+        icon: nginx.png
+        href: http://192.168.1.203
+        description: Nginx 1.22.1 — mål-webserver
+
+- Angrepslab:
+    - Kali:
+        icon: kali-linux.png
+        href: http://192.168.1.202
+        description: Angrepsnode (dual-homed) — kun lenke, ingen stats
+
+    - Metasploitable:
+        icon: mdi-skull
+        description: >-
+          Bevisst sårbart mål (10.0.0.176) — ikke en reell tjeneste. Strukturelt
+          isolert på vmbr1, ingen rute fra vmbr0/Homepage.

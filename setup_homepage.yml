@@ -1,0 +1,53 @@
+---
+# To ting å merke seg her, begge oppdaget under faktisk kjøring mot labben:
+#
+# 1) Pusher en bootstrap-skript-fil til containeren og kjører den, i stedet for å
+#    neste "sh -c '...'" gjennom ssh-hoppet mgmt -> proxmox. ssh flater ut
+#    mellomrom-separerte argumenter til én streng når den videresender kommandoen,
+#    noe som ødelegger indre anførselstegn (f.eks. "curl: try --help" fordi sh -c
+#    bare mottok "curl" som kommando og resten som løse posisjonsparametre). Én
+#    fil + ett enkelt sti-argument har ingen slik nesting å ødelegges.
+#
+# 2) "pct push" tar lokal kildesti relativt til host-exec-hoppet (proxmox), ikke
+#    relativt til mgmt-node hvor Ansible faktisk kjører. Filene må derfor scp'es
+#    til proxmox FØRST. "pct push" returnerer også exit 0 selv når kildefilen
+#    ikke finnes (skriver bare "failed to open ... for reading" til stdout) — så
+#    denne feilen vises IKKE som en Ansible-feil uten en eksplisitt sjekk.
+- name: Konfigurer Homepage-container via Host-exec
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Scp docker-compose.yml til proxmox-host
+      command: "scp docker-compose.yml root@192.168.1.50:/root/docker-compose.yml"
+
+    - name: Scp services.yaml til proxmox-host
+      command: "scp services.yaml root@192.168.1.50:/root/services.yaml"
+
+    - name: Scp bootstrap-skript til proxmox-host
+      command: "scp homepage_bootstrap.sh root@192.168.1.50:/root/homepage_bootstrap.sh"
+
+    - name: Opprett /opt/homepage/config i container
+      command: "ssh root@192.168.1.50 pct exec 203 -- mkdir -p /opt/homepage/config"
+
+    - name: Push docker-compose.yml til container
+      command: "ssh root@192.168.1.50 pct push 203 /root/docker-compose.yml /opt/homepage/docker-compose.yml"
+      register: push_compose
+      failed_when: "'failed to open' in push_compose.stdout"
+
+    - name: Push services.yaml til container
+      command: "ssh root@192.168.1.50 pct push 203 /root/services.yaml /opt/homepage/config/services.yaml"
+      register: push_services
+      failed_when: "'failed to open' in push_services.stdout"
+
+    - name: Push bootstrap-skript til container
+      command: "ssh root@192.168.1.50 pct push 203 /root/homepage_bootstrap.sh /root/homepage_bootstrap.sh"
+      register: push_bootstrap
+      failed_when: "'failed to open' in push_bootstrap.stdout"
+
+    - name: Kjør bootstrap-skript i container (Docker-install, compose up, iptables)
+      command: "ssh root@192.168.1.50 pct exec 203 -- sh /root/homepage_bootstrap.sh"
+
+    - name: Rydd opp midlertidige filer på proxmox-host
+      command: "ssh root@192.168.1.50 rm -f /root/docker-compose.yml /root/services.yaml /root/homepage_bootstrap.sh"

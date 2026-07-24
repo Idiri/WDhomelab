@@ -1,0 +1,32 @@
+---
+# Bruker samme "host-exec" pct-create-mønster som deploy_kali.yml (CT 202) — dette er
+# den bekreftet fungerende metoden i repoet. community.general.proxmox-modulen (brukt
+# i deploy_ct.yml) feiler ved container-opprettelse via API-token med "Only root can
+# pass arbitrary filesystem paths" (PVE-begrensning på tokens, uavhengig av privsep) —
+# CT 203 ble aldri opprettet med den metoden.
+- name: Deploy Homepage container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    # --features nesting=1 er påkrevd for at Docker skal kunne mounte overlayfs
+    # inne i en unprivileged LXC-container — uten dette feiler image-pull med
+    # "permission denied" ved mount av overlay-laget (funnet under faktisk kjøring)
+    - name: Opprett Homepage container 203
+      command: >
+        ssh root@192.168.1.50
+        pct create 203
+        local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+        --hostname homepage
+        --cores 1
+        --memory 1024
+        --swap 512
+        --rootfs local:6
+        --net0 name=eth0,bridge=vmbr0,ip=192.168.1.204/24,gw=192.168.1.254
+        --nameserver 8.8.8.8
+        --unprivileged 1
+        --features nesting=1
+
+    - name: Start Homepage container
+      command: "ssh root@192.168.1.50 pct start 203"
