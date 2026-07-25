@@ -1,5 +1,5 @@
 ---
-- Infrastruktur:
+- Infrastruktur (vmbr0 — Admin):
     - Proxmox:
         icon: proxmox.png
         href: https://192.168.1.50:8006
@@ -95,7 +95,7 @@
               label: Sist sjekket
               format: text
 
-- Angrepslab:
+- Angrepslab (vmbr1 — Isolert Lab):
     - Kali:
         icon: kali-linux.png
         href: http://192.168.1.202

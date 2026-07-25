@@ -1,6 +1,6 @@
-# Homelab 2.7
+# Homelab 2.8
 
-**Versjon:** 2.7 — 25. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.6 — 25. juli 2026
+**Versjon:** 2.8 — 25. juli 2026 | **Status:** Fullt operasjonell (dashboard-visning midlertidig hemmet av cache-bug, se Åpne punkter) | **Forrige versjon:** 2.7 — 25. juli 2026
 
 ---
 
@@ -101,6 +101,19 @@
 | Live brannmur-toggle-test utført og reversert trygt | For å bevise isolasjonsflisen faktisk følger reell tilstand (ikke bare en statisk verdi): blokkeringsregelen ble MIDLERTIDIG fjernet ved å laste et modifisert pf-regelsett via `pfctl -f` på et in-memory kopi av `/tmp/rules.debug` (config.xml ble ALDRI rørt — i tråd med den dokumenterte lærdommen om at direkte config.xml-redigering krevde full reinstallasjon tidligere). Med policy-rutingen på plass: fjernet regel → HTTP 200 (bekreftet lekkasje mulig), gjenopprettet regel via `configctl filter reload` (regenererer rent fra det urørte config.xml) → HTTP 000 igjen. isolation.json fulgte korrekt i begge retninger. Total tid regelen var fjernet: under ett minutt |
 | Backup/snapshot-alderstimer (Proxmox-host) | Ny systemd-timer på Proxmox-hosten selv (hver time, ingen scp nødvendig — alt lokalt). `backups_check.py` leser `/var/lib/vz/dump/*.tar.zst`-mtider + snapshot-tidspunkt for VM 101/300 via `pvesh get /nodes/proxy/qemu/<id>/snapshot` (snaptime-felt, mer pålitelig enn å parse `qm listsnapshot` sin tekst-tabell), skriver backups.json, pusher med `pct push 203` |
 | Golden Path oppdatert | Nytt steg: verifiser Uptime Kuma-status og de to nye customapi-timerne (se seksjon 4) |
+
+### Changelog (v2.7 → v2.8)
+
+| Endring | Detalj |
+|---|---|
+| Homepage visuell identitet (Fase 3) | Nytt `custom.css` (mørk bakgrunn, distinkt farge/kant-behandling for admin- vs. lab-segment-gruppene) + `settings.yaml` fikk `theme: dark` eksplisitt. `services.yaml`-gruppene omdøpt "Infrastruktur" → "Infrastruktur (vmbr0 — Admin)" og "Angrepslab" → "Angrepslab (vmbr1 — Isolert Lab)" — kosmetisk rename, ingen widget-/funksjonsendring. Fliser farge-kodet KUN mot eksisterende, navngitte rader i Sikkerhetsstatus-tabellen (Proxmox + Isolasjon → grønn, OPNsense → gult), ingen nye vurderinger gjort |
+| DOM verifisert direkte mot live container før CSS ble skrevet | `curl` mot 192.168.1.204:3000 + gjennomgang av rendret HTML bekreftet faktiske CSS-klasser/selectors (`services-group`, `service-card`, `li.service[data-name=...]`) — CSS skrevet mot bekreftet markup, ikke gjettet fra dokumentasjon |
+| Kritisk funn under verifisering: Homepage sin dashboard-side er cachet og viser IKKE reelt innhold | `curl` mot 192.168.1.204:3000 returnerer konsekvent Next.js sin innebygde placeholder-side ("My First/Second/Third Group") med `x-nextjs-cache: HIT` og `Cache-Control: s-maxage=31536000` (ETag uendret før/etter config-push) — til tross for at `/opt/homepage/config/services.yaml` inne i CT 203 alltid har inneholdt korrekt, reelt innhold. Samme resultat både før og etter denne øktens config-push, med identisk ETag — bekrefter en frossen server-side cache, ikke en midlertidig treffer. IKKE fikset denne økten (utenfor scope — se Åpne punkter) |
+| Config likevel pushet via etablert mønster | `custom.css`, `settings.yaml`, `services.yaml` (med rename) pushet scp→proxmox→`pct push`→CT 203, samme kjede som `setup_homepage.yml` bruker for filoverføring — bevisst UTEN å kjøre `homepage_bootstrap.sh` på nytt (den rører iptables, utenfor denne øktens scope). Filene ligger nå korrekt i `/opt/homepage/config/` og plukkes opp av containerens config-watcher (bekreftet i docker-logg: "X was copied to the config folder"), men den cachede HTML-siden reflekterer dem ikke før containeren restartes |
+| uptimekuma-widget validation-feil oppdaget (separat fra cache-bugen) | Docker-logg for `homepage`-containeren viser gjentatte `<validateWidgetData> Invalid data for widget 'uptimekuma'` — endepunktet returnerer Uptime Kuma sin rå HTML-side (noscript-fallback), ikke JSON, for minst én widget-URL. Ikke undersøkt videre eller fikset denne økten — se Åpne punkter |
+| Sanitert `services.yaml`-variant + reproduserbart skript (Fase 4) | `services.sanitized.yaml` + `sanitize.sed` lagt til i repoet. Alle reelle IP-er erstattet med RFC 5737-dokumentasjonsadresser (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), Proxmox-token-placeholders erstattet med åpenbare demo-verdier. `sanitize.sed` dekker de mekaniske IP-/token-erstatningene; to fritekst-beskrivelser (SSH-tunnel-kommando med reell IP, "10.0.0.x/192.168.1.x"-notasjon) måtte omformuleres for hånd — dokumentert i selve sed-filens kommentar |
+| README.md lagt til i WDhomelab (fantes ikke tidligere) | Kort, internt README som peker til `docs/homelab.md` som eneste kilde til sannhet, samt til den offentlige porteføljerepoen for sanitert visning |
+| Offentlig portefølje-README oppdatert (github.com/Idiri/homelab, separat repo) | Utvidet med Mermaid-arkitekturdiagram, plass til sanitert skjermbilde (venter på at cache-bugen løses av bruker før skjermbilde faktisk kan tas), "hva dette demonstrerer"-seksjon, og et ærlig avsnitt om reelle feil funnet og fikset tidligere i prosjektet (port 8006-regresjonen fra v2.5, ett-lags vs. to-lags-funnet fra v2.6) |
 
 ---
 
@@ -242,7 +255,10 @@ Dette påvirker KUN trafikk som Kali selv originerer med kilde-IP 10.0.0.10 spes
 | isolation_check.sh + isolation-check.service/.timer | Nytt 25. juli — systemd-timer PÅ MGMT-NODE (hvert minutt), se "Uptime Kuma & status-api"-seksjonen over |
 | backups_check.py + backups-check.service/.timer | Nytt 25. juli — systemd-timer PÅ PROXMOX-HOSTEN (hver time), se "Uptime Kuma & status-api"-seksjonen over |
 | kali_interfaces / setup_kali_policy_routing.yml | Nytt 25. juli — persisterer policy-ruting (kilde 10.0.0.10 → table 100 via OPNsense) i Kalis /etc/network/interfaces, nødvendig for at isolasjonssjekken skal fungere reelt (se v2.6→v2.7-changelog) |
-| services.yaml | Oppdatert 25. juli — widgets: (flertall) for alle 6 overvåkede noder, Proxmox utvidet med node+disk, to nye customapi-fliser (Isolasjon, Backup-status) |
+| services.yaml | Oppdatert 25. juli — widgets: (flertall) for alle 6 overvåkede noder, Proxmox utvidet med node+disk, to nye customapi-fliser (Isolasjon, Backup-status). Nytt 25. juli (v2.8): gruppene omdøpt til å vise vmbr0/vmbr1 |
+| custom.css | Nytt 25. juli (v2.8) — Homepage-tema: mørk bakgrunn, distinkt farge/kant for admin- vs. lab-segment, statusfarger på fliser mot Sikkerhetsstatus-tabellen |
+| settings.yaml | Nytt 25. juli (v2.8) — `theme: dark` lagt til eksplisitt (fantes fra før med kun weather-provider-stub) |
+| services.sanitized.yaml / sanitize.sed | Nytt 25. juli (v2.8) — sanitert services.yaml-variant (RFC 5737-IP-er, fake tokens) for offentlige skjermbilder, + skriptet som produserer den mekaniske delen av den |
 
 **Versjonskontroll (nytt 16. juli):** Playbooks er nå et git-repo, pushet til github.com/Idiri/WDhomelab. Vault-passordet ligger kun lokalt på mgmt-node (`/root/.vault_pass`, gitignored, chmod 600) — aldri i repoet.
 
@@ -311,6 +327,7 @@ Host opnsense
 | Fase 19 — Dashboard koblet til reelle datakilder | services.yaml wired med uptimekuma/customapi-widgets for alle fliser, Proxmox utvidet med cpu/mem/disk | Homepage viser reell status, ikke bare lenker |
 | Fase 20 — To kritiske bugs funnet og fikset under verifisering | (1) Homepage sin Proxmox-widget hadde aldri faktisk autentisert siden 24. juli (manglende scp-steg i push_homepage_secrets.yml). (2) Isolasjonssjekken testet aldri faktisk OPNsense-regelen fra Kali (manglende policy-ruting) — Fase 16 sin opprinnelige verifisering fra Metasploitable var derimot gyldig | Begge fikset og reverifisert med ekte data — se v2.6→v2.7-changelog for full diagnostikk |
 | Fase 21 — Live brannmur-toggle-test | OPNsense sin inter-segment-blokkeringsregel midlertidig fjernet via pfctl (config.xml urørt) for å bevise isolasjonsflisen følger reell tilstand, gjenopprettet via configctl filter reload | Isolasjonsflisen bekreftet reelt funksjonell, ikke en statisk placeholder |
+| Fase 22 — Dashboard visuell identitet + porteføljedokumentasjon | custom.css + settings.yaml (tema), services.yaml-gruppene omdøpt til å vise vmbr0/vmbr1, statusfarger på fliser mot Sikkerhetsstatus-tabellen. Sanitert services.yaml-variant + sed-skript laget for offentlige skjermbilder. README.md lagt til i WDhomelab, portefølje-README utvidet i den offentlige repoen | Kosmetisk/dokumentasjonsarbeid ferdig, men avdekket en cache-bug som hindrer visuell verifisering — se Åpne punkter |
 
 ### Kritiske lærdommer
 
@@ -460,6 +477,8 @@ git push
 | 🟡 Lav | Sårbarhetsskann-baseline (OpenVAS/nmap --script vuln) for Metasploitable + web-01 | Ikke startet |
 | 🟡 Lav | Automatiser OPNsense config.xml-backup | Ikke startet |
 | 🟡 Lav | DNS for lab-nettet (dnsmasq/Pi-hole på vmbr1) | Ikke startet |
+| 🟠 Medium | Homepage-dashbordet (192.168.1.204:3000) serverer en frossen Next.js-cache, ikke reelt innhold | Nytt 25. juli (v2.8) — `curl` returnerer konsekvent placeholder-siden ("My First/Second/Third Group") med `x-nextjs-cache: HIT` og `Cache-Control: s-maxage=31536000`, uendret ETag før/etter denne øktens config-push. Den faktiske config-filen i CT 203 (`/opt/homepage/config/services.yaml`) er og har vært korrekt. Sannsynlig fiks: restart av `homepage`-containeren (`docker compose restart` i CT 203) for å tvinge cache-invalidering — IKKE gjort denne økten, da containerrestart var utenfor denne øktens uttalte scope (kosmetikk/dokumentasjon). Blokkerer reell visuell verifisering av Fase 3-temaet og tar dermed også det saniterte skjermbildet for Fase 4 til gode inntil løst |
+| 🟡 Lav | uptimekuma-widget i Homepage feiler datavalidering for minst én endepunkt-URL | Nytt 25. juli (v2.8) — docker-logg viser `<validateWidgetData> Invalid data for widget 'uptimekuma'`, med rå HTML (Uptime Kuma sin noscript-fallback-side) i stedet for JSON som respons. Sannsynlig feil URL/manglende statusside-slug i en av de 6 uptimekuma-widgetene i services.yaml. Ikke diagnostisert videre eller fikset denne økten |
 
 ---
 
