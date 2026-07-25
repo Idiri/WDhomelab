@@ -1,0 +1,30 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - "192.168.1.204:3000:3000"
+    volumes:
+      - ./config:/app/config
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: 192.168.1.204:3000
+    env_file:
+      - path: .env # ikke i git — pushet separat fra Vault, se push_homepage_secrets.yml
+        required: false # tillater første oppstart før hemmeligheter er fylt inn
+    depends_on:
+      - status-api
+
+  # Serverer isolation.json og backups.json til Homepage sin customapi-widget.
+  # Ikke publisert til CT 203 sin vert i det hele tatt (ingen "ports:") — kun
+  # nåbar fra homepage-containeren via docker-compose sitt interne nettverk
+  # (http://status-api:8080/...). Ingen ny iptables-regel nødvendig for dette.
+  status-api:
+    image: halverneus/static-file-server:latest
+    container_name: status-api
+    restart: unless-stopped
+    volumes:
+      - ./status:/web
+    environment:
+      FOLDER: /web
+      PORT: 8080

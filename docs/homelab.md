@@ -1,6 +1,6 @@
-# Homelab 2.6
+# Homelab 2.7
 
-**Versjon:** 2.6 — 25. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.5 — 24. juli 2026
+**Versjon:** 2.7 — 25. juli 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.6 — 25. juli 2026
 
 ---
 
@@ -85,6 +85,23 @@
 | Layer 1 (Proxmox-host FORWARD-regel for port 3000) bekreftet å være dead code, ikke et reelt sikkerhetslag | Tailscale sin egen auto-genererte ts-forward-kjede kjøres UBETINGET som første regel i FORWARD-kjeden og ACCEPTerer (terminalt, MARK+ACCEPT) ALL trafikk som ankommer på tailscale0 til hele det annonserte subnettet — uansett destinasjon eller port — før pakken noensinne når de skreddersydde port 3000-reglene lenger ned i FORWARD-kjeden. Bekreftet med tellere: etter en bekreftet vellykket test viste FORWARD sin egen ACCEPT-regel (tailscale0→192.168.1.204:3000) og DROP-regelen begge fortsatt 0 pakker, mens ts-forward sin ACCEPT-regel viste 36 pakker. Det "to-lags"-forsvaret dokumentert i v2.5 har derfor reelt sett aldri vært to uavhengige lag — DOCKER-USER-regelen i CT 203 (kilde == 192.168.1.50) er og har alltid vært den ENESTE reelle håndhevingen for dette porten. FORWARD-regelen for port 3000 er ufarlig å beholde, men villedende dokumentasjon (se Åpne punkter) |
 | Fiks verifisert | Etter sysctl-fiks + rute-godkjenning: siden en reell av-LAN-test ikke var praktisk mulig midt i økten, ble en midlertidig host-rute (`route add -host 192.168.1.204 -interface utun6`) lagt til på Mac-en for å tvinge trafikk gjennom Tailscale-tunnelen og simulere en genuin ekstern klient — curl mot 192.168.1.204:3000 ga HTTP 200, deretter fjernet ruten igjen. LAN-blokkeringen ble retestet samtidig: curl fra mgmt-node (192.168.1.200, ekte LAN-kilde, ikke via Tailscale) mot samme URL feiler fortsatt (HTTP 000) — DOCKER-USER-sperren er uendret og fungerer som før |
 
+### Changelog (v2.6 → v2.7)
+
+| Endring | Detalj |
+|---|---|
+| Uptime Kuma deployet (CT 204) | Ny LXC "uptime-kuma" på vmbr0, 192.168.1.205, egen container (CT 203 hadde kun ~83MB fri RAM igjen). Kjører louislam/uptime-kuma via Docker Compose, publisert på 192.168.1.205:3001 + 127.0.0.1:3001 (sistnevnte kun for lokale oppsettsskript kjørt inne i containeren). status-api-sidecaren ble bevisst plassert på CT 203 sammen med Homepage, IKKE på CT 204 — ulike LXC-verter kan ikke dele et Docker-internt nettverk |
+| 6 monitorer + 6 enkelt-monitor statussider opprettet i Kuma | proxmox-host, mgmt-node, web-01, kali-01 (direkte ping/http fra CT 204), pluss metasploitable og opnsense (begge push-type, matet av en systemd-timer på Kali over eth1/vmbr1 — se under). Homepage sin uptimekuma-widget leser kun statusside-nivå (aggregert), ikke enkeltmonitorer, derfor én side per monitor |
+| Port 3001 låst med DOCKER-USER + løs bug fra CT 203 unngått | Samme navngitte kilde-unntak-mønster som port 3000 (192.168.1.204 Homepage, 192.168.1.50 Tailscale/mgmt, 192.168.1.202 Kali-push). Docker-publisert-port-INPUT-DROP-mønsteret blokkerer loopback med mindre `-i lo -j ACCEPT` settes inn FØRST — hit denne bugen live på CT 204 (127.0.0.1-binding brøt kuma_setup.py sitt lokale oppsettskall), fikset i uptimekuma_bootstrap.sh. CT 203 revidert i etterkant: IKKE sårbar for samme bug, siden docker-compose-homepage.yml aldri publiserer til 127.0.0.1 i utgangspunktet (kun til 192.168.1.204) — ingen loopback-lytter betyr ingenting å blokkere |
+| OPNsense push-monitor viste falsk "down" — rotårsak: ICMP blokkert av rest fra Fase 17-forsøket | metasploitable_heartbeat.sh sjekket OPNsense LAN (10.0.0.1) med `ping`, ikke curl. `pfctl -sr` avdekket at det uferdige Fase 17-forsøket (begrense adminporter til Kali) etterlot en catch-all-regel — `block drop in quick inet from (vtnet1:network) to (self)` — som blokkerer ALL ikke-TCP/ikke-DHCP trafikk fra lab-nettet til OPNsense sin egen LAN-IP. SSH/HTTP/HTTPS har egne eksplisitte quick pass-regler FORAN denne og er upåvirket (bekreftet med curl/nc mot 10.0.0.1:443 — 200/open). Fikset ved å bytte OPNsense-sjekken i heartbeat-skriptet fra ping til `curl --interface eth1 https://10.0.0.1` (TCP 443, som allerede har en eksplisitt pass-regel). Metasploitable-sjekken er uendret (ping fungerer fint der, ingen tilsvarende regel). Selve pf-regelen ble IKKE fjernet/endret — dette er en overvåkings-fiks, ikke en brannmur-fiks |
+| services.yaml koblet til dashboardet | `widgets:` (flertall, liste) — ikke `widget:` (entall) — er reell, verifisert syntaks for flere widgets per flis i denne Homepage-versjonen (1.13.2). Alle 6 overvåkede noder fikk en uptimekuma-widget. Proxmox-flisen utvidet med `node: proxy` (nodenavnet er "proxy", ikke "pve" — verifisert via `pvesh get /nodes`) — de innebygde feltene vms/lxc/resources.cpu/resources.mem vises automatisk, ingen egen `fields:`-nøkkel finnes. Disk-bruk finnes IKKE i den innebygde proxmox-widgeten — løst med en egen customapi-widget mot `/api2/json/nodes/proxy/status` (felt `data.rootfs.used`/`data.rootfs.total`, format: bytes). To nye customapi-fliser lagt til: Isolasjon og Backup-status, som leser `http://status-api:8080/isolation.json` og `backups.json` (Docker-internt, samme compose-nettverk som Homepage — ingen ny iptables-regel nødvendig). Ny flis for mgmt-node lagt til (fantes ikke fra før i services.yaml, selv om noden alltid har vært overvåket i Kuma) |
+| Kritisk bug funnet og fikset: Homepage sin Proxmox-widget hadde ALDRI faktisk autentisert, verken i denne økten eller v2.5 | `push_homepage_secrets.yml` rendret `.env` lokalt på mgmt-node (`hosts: localhost`), men kjørte deretter `pct push` FRA proxmox-hosten via en nestet ssh-kommando — `pct push` sin kildesti er lokal til der `pct` selv kjører (proxmox), ikke til mgmt-node. Filen ble aldri kopiert til proxmox først, så `pct push` leste en ikke-eksisterende fil og "lyktes" likevel (samme stille feilmodus som allerede dokumentert i setup_homepage.yml for andre pct push-kall — ikke fanget her fordi playbooken manglet samme `failed_when`-sjekk). Resultat: `/opt/homepage/.env` har aldri eksistert på CT 203, og Homepage sin native `proxmox`-widget har kjørt uten credentials (bekreftet 401 fra Proxmox sin API) siden den ble satt opp 24. juli — tidligere "10 pakker gjennom brannmuren" ble feilaktig tolket som bevis på at den fungerte, men beviste kun at TCP-forbindelsen kom gjennom, ikke at HTTP-kallet lyktes. Fikset: lagt til manglende scp-til-proxmox-steg + `failed_when`-sjekk i push_homepage_secrets.yml, kjørt på nytt, verifisert med et ekte 200-svar mot Proxmox sin API via Homepage sin egen interne proxy-rute (`/api/services/proxy`) |
+| Manglende token-nivå-ACL for homepage-readonly-token oppdaget og fikset | Token `homepage-readonly@pve!dashboard` har `privsep=1` (privilegie-separasjon) — under privsep gjelder IKKE en bruker-nivå-ACL (`pveum acl` viste kun `type: user`) automatisk for selve tokenet; tokenet trenger sin EGEN ACL-oppføring (`type: token`) for samme rolle. Enkelte PVE-endepunkter (f.eks. `/cluster/resources`, `/nodes`) krevde tilsynelatende ikke Sys.Audit og fungerte likevel, mens `/nodes/proxy/status` (nødvendig for disk-widgeten) feilet eksplisitt med "403 Permission check failed (/nodes/proxy, Sys.Audit)". Fikset med `pveum acl modify / --roles PVEAuditor --tokens 'homepage-readonly@pve!dashboard'` — dette gir INGEN nye rettigheter utover det allerede dokumenterte og besluttede formålet (les-only PVEAuditor for dashbordet), det fullfører kun en allerede vedtatt, ufullstendig implementert tildeling. Selve token-hemmeligheten ble aldri limt inn i denne samtalen — kun lest server-side på mgmt-node via `ansible-vault view` og brukt direkte i et Python-skript kjørt over SSH, aldri skrevet til stdout eller en lokal fil (én feil ble gjort og umiddelbart rettet: et `ansible-vault view`-kall ble ved en feil omdirigert til en lokal fil på Mac-en via shell-redirect istedenfor å prosesseres server-side — filen ble aldri lest/vist og ble slettet umiddelbart) |
+| Isolasjonssjekk-timer (mgmt-node → Kali → status-api) | Ny systemd-timer på mgmt-node (hvert minutt) som via "host-exec"-mønsteret (`ssh proxmox "pct exec 202 -- curl ... --interface eth1 http://192.168.1.203"`) ber Kali hente web-01 over sitt eth1/vmbr1-interface, skriver isolation.json, og pusher den inn i CT 203 via samme scp+pct push-kjede. Semantikk: `http_code == 000` (ingen forbindelse) betyr isolasjonen VIRKER ("isolert"), et ekte HTTP-svar betyr et sikkerhetsbrudd ("LEKKASJE") — motsatt av vanlig opp/nede-overvåking |
+| Kritisk funn: isolasjonssjekken testet IKKE faktisk OPNsense-regelen, verken i denne økten eller i v2.4/Fase 16 sin opprinnelige verifisering fra Kali | Pakkefangst på OPNsense sine vtnet0/vtnet1-interfacer under en levende test viste at Kalis `curl --interface eth1 http://192.168.1.203` aldri når OPNsense i det hele tatt — Kali ARP-er etter 192.168.1.203 direkte på eth1 og får intet svar, fordi Kali er dual-homed med en DIREKTE rute til 192.168.1.0/24 via eth0 (samme mål-subnett), og destinasjons-basert ruting velger alltid denne fremfor eth1 uansett hvilket interface curl bindes til. Bekreftet ved å midlertidig fjerne OPNsense sin blokkeringsregel (se under) — testen feilet identisk uansett. Fase 16 sin opprinnelige "verifisert fra Metasploitable"-test var derimot gyldig, siden Metasploitable er single-homed og faktisk ruter alt via OPNsense som default gateway. Fikset med policy-basert (kilde-basert) ruting på Kali: en egen rutetabell (100) + `ip rule from 10.0.0.10 lookup 100`, persistert i `/etc/network/interfaces` (ifupdown `up`/`down`-hooks på eth1-stanzaen), slik at trafikk med kilde 10.0.0.10 spesifikt tvinges via eth1/OPNsense selv om en konkurrerende direkte rute finnes. Påvirker kun Kalis egen trafikk fra denne ene kilde-IP-en — endrer ingenting for andre noder eller for OPNsense sin filtrering |
+| Live brannmur-toggle-test utført og reversert trygt | For å bevise isolasjonsflisen faktisk følger reell tilstand (ikke bare en statisk verdi): blokkeringsregelen ble MIDLERTIDIG fjernet ved å laste et modifisert pf-regelsett via `pfctl -f` på et in-memory kopi av `/tmp/rules.debug` (config.xml ble ALDRI rørt — i tråd med den dokumenterte lærdommen om at direkte config.xml-redigering krevde full reinstallasjon tidligere). Med policy-rutingen på plass: fjernet regel → HTTP 200 (bekreftet lekkasje mulig), gjenopprettet regel via `configctl filter reload` (regenererer rent fra det urørte config.xml) → HTTP 000 igjen. isolation.json fulgte korrekt i begge retninger. Total tid regelen var fjernet: under ett minutt |
+| Backup/snapshot-alderstimer (Proxmox-host) | Ny systemd-timer på Proxmox-hosten selv (hver time, ingen scp nødvendig — alt lokalt). `backups_check.py` leser `/var/lib/vz/dump/*.tar.zst`-mtider + snapshot-tidspunkt for VM 101/300 via `pvesh get /nodes/proxy/qemu/<id>/snapshot` (snaptime-felt, mer pålitelig enn å parse `qm listsnapshot` sin tekst-tabell), skriver backups.json, pusher med `pct push 203` |
+| Golden Path oppdatert | Nytt steg: verifiser Uptime Kuma-status og de to nye customapi-timerne (se seksjon 4) |
+
 ---
 
 Bygget på Proxmox VE (192.168.1.50) for offensiv sikkerhetstesting og data engineering. Målet er et kontrollert miljø der angrepsscenarier kan kjøres uten risiko for produksjonsnettet.
@@ -119,7 +136,8 @@ OPNsense fungerer som gateway og DHCP-server mellom segmentene. Kali er dual-hom
 | 200 | mgmt-node | LXC | 192.168.1.200 | — | Ansible-kontrollnode | ✅ Running |
 | 201 | web-01 | LXC | 192.168.1.203 | — | Nginx 1.22.1 webserver (mål) | ✅ Running |
 | 202 | kali-01 | LXC | 192.168.1.202 | 10.0.0.10/24 | Kali Linux, angrepsnode | ✅ Running |
-| 203 | homepage | LXC | 192.168.1.204 | — | Homepage-dashboard (gethomepage.dev), kun via Tailscale | ✅ Running |
+| 203 | homepage | LXC | 192.168.1.204 | — | Homepage-dashboard (gethomepage.dev) + status-api-sidecar, kun via Tailscale | ✅ Running |
+| 204 | uptime-kuma | LXC | 192.168.1.205 | — | Uptime Kuma — 6 monitorer, 6 statussider, matet direkte + via push fra Kali | ✅ Running |
 | 300 | metasploitable | VM (Linux) | — | 10.0.0.176/24 (DHCP) | Sårbart mål | ✅ Running |
 | 9001 | kali-template | VM | — | vmbr1 | Ren Kali-template | ⏹ Stopped |
 
@@ -183,6 +201,25 @@ eth1 → vmbr1 → 10.0.0.10/24       # Direkte tilgang til lab-nettet
 
 Kali er den eneste noden som kan nå begge segmenter. Den fungerer også som SSH jump-host for å nå OPNsense. Metasploitable er kun synlig fra kali via 10.0.0.x, og kan siden 16. juli ikke lenger nå 192.168.1.x i det hele tatt.
 
+**Merk (25. juli) — policy-basert ruting for isolasjonssjekk:** Fordi Kali er dual-homed med en direkte rute til 192.168.1.0/24 via eth0, taper enhver forsøkt rute til samme subnett via eth1 alltid mot den direkte tilkoblede ruten — uansett hvilket interface en applikasjon binder til. For at isolasjonssjekk-timeren (se seksjon 4) faktisk skal runde-trippe via OPNsense i stedet for å feile lokalt på Kali, er følgende lagt til i `/etc/network/interfaces` sin eth1-stanza:
+
+```
+up ip route add 192.168.1.0/24 via 10.0.0.1 dev eth1 table 100
+up ip rule add from 10.0.0.10 table 100 priority 100
+down ip rule del from 10.0.0.10 table 100 priority 100
+down ip route del 192.168.1.0/24 via 10.0.0.1 dev eth1 table 100
+```
+
+Dette påvirker KUN trafikk som Kali selv originerer med kilde-IP 10.0.0.10 spesifikt (f.eks. isolasjonssjekken) — endrer ingenting for andre noder på noen av segmentene, og trafikken passerer fortsatt gjennom OPNsense sine ordinære filterregler som normalt.
+
+### Uptime Kuma & status-api (dashboard-backend)
+
+- **CT 204 (Uptime Kuma)** kjører uavhengig av CT 203 — separat container fordi CT 203 kun hadde ~83MB fri RAM. 6 monitorer: proxmox-host, mgmt-node, web-01, kali-01 (direkte ping/http fra CT 204, siden alle er nåbare på vmbr0), pluss metasploitable og opnsense (begge push-type — CT 204 har strukturelt ingen rute til vmbr1, akkurat som Homepage).
+- **status-api** er en enkel `halverneus/static-file-server`-sidecar i samme docker-compose som Homepage PÅ CT 203 (ikke CT 204 — ulike LXC-verter deler ikke et Docker-internt nettverk). Server `isolation.json` og `backups.json` på port 8080, kun nåbar fra homepage-containeren via compose sitt interne nettverk (`http://status-api:8080/...`) — ingen `ports:`-publisering, ingen ny iptables-regel nødvendig.
+- **isolation.json** skrives av en systemd-timer PÅ MGMT-NODE (hvert minutt): via host-exec (`ssh proxmox "pct exec 202 -- curl ... --interface eth1 http://192.168.1.203"`) ber den Kali runde-trippe gjennom OPNsense sin inter-segment-regel, skriver resultatet lokalt, og pusher det inn i CT 203 via samme scp+pct push-kjede som andre filer. `http_code == 000` = isolasjonen virker ("isolert"), et ekte HTTP-svar = brudd ("LEKKASJE").
+- **backups.json** skrives av en systemd-timer PÅ PROXMOX-HOSTEN selv (hver time, ingen scp nødvendig): `backups_check.py` leser vzdump-mtider og snapshot-tidspunkt (via `pvesh`) for VM 101/300, pusher resultatet inn i CT 203 med `pct push`.
+- Begge timere bruker systemd (`.service` + `.timer`) — cron er ikke installert på disse image-ene, samme funn som for Kalis metasploitable-heartbeat i v2.5.
+
 ### Ansible-filer (mgmt-node / 192.168.1.200)
 
 | Fil | Rolle |
@@ -194,8 +231,18 @@ Kali er den eneste noden som kan nå begge segmenter. Den fungerer også som SSH
 | deploy_homepage.yml | Nytt 24. juli — oppretter Homepage-container (CT 203). Bruker "pct create over ssh"-mønster (som deploy_kali.yml), ikke community.general.proxmox-modulen (se v2.4→v2.5-changelog for hvorfor) |
 | setup_homepage.yml | Nytt 24. juli — pusher docker-compose.yml/services.yaml/bootstrap-skript til CT 203 og kjører dem |
 | homepage_bootstrap.sh | Nytt 24. juli — Docker-install, compose up, iptables-låsing inne i CT 203 |
-| push_homepage_secrets.yml | Nytt 24. juli — kjøres manuelt etter at homepage_vars.yml er fylt inn; pusher Proxmox-token til CT 203 som .env uten å logge verdien |
+| push_homepage_secrets.yml | Nytt 24. juli, fikset 25. juli — kjøres manuelt etter at homepage_vars.yml er fylt inn; pusher Proxmox-token til CT 203 som .env uten å logge verdien. 25. juli: lagt til manglende scp-til-proxmox-steg + failed_when-sjekk (se v2.6→v2.7-changelog — .env ble aldri faktisk levert før dette) |
 | homepage_vars.yml | Nytt 24. juli — Proxmox-token for Homepage sin dashboard-widget, Ansible Vault-kryptert (AES256), samme mønster som proxmox_vars.yml |
+| deploy_uptimekuma.yml | Nytt 25. juli — oppretter Uptime Kuma-container (CT 204), samme "pct create over ssh"-mønster som deploy_homepage.yml |
+| setup_uptimekuma.yml | Nytt 25. juli — pusher docker-compose-kuma.yml + uptimekuma_bootstrap.sh til CT 204 og kjører dem |
+| uptimekuma_bootstrap.sh | Nytt 25. juli — Docker-install, compose up, iptables-låsing (inkl. `-i lo -j ACCEPT` FØR DROP-regelen på port 3001) inne i CT 204 |
+| setup_homepage_statusapi.yml | Nytt 25. juli — legger til status-api-sidecar i CT 203 sin docker-compose |
+| kuma_setup.py / kuma_run.sh / setup_kuma_monitors.yml | Nytt 25. juli — oppretter Kuma-admin, 6 monitorer og 6 statussider via uptime-kuma-api |
+| metasploitable_heartbeat.sh + metasploitable-heartbeat.service/.timer | Nytt 25. juli, oppdatert 25. juli — systemd-timer PÅ KALI (hvert minutt) som pusher heartbeats for Metasploitable (ping) og OPNsense LAN (curl/443, byttet fra ping — se v2.6→v2.7-changelog) til Kuma |
+| isolation_check.sh + isolation-check.service/.timer | Nytt 25. juli — systemd-timer PÅ MGMT-NODE (hvert minutt), se "Uptime Kuma & status-api"-seksjonen over |
+| backups_check.py + backups-check.service/.timer | Nytt 25. juli — systemd-timer PÅ PROXMOX-HOSTEN (hver time), se "Uptime Kuma & status-api"-seksjonen over |
+| kali_interfaces / setup_kali_policy_routing.yml | Nytt 25. juli — persisterer policy-ruting (kilde 10.0.0.10 → table 100 via OPNsense) i Kalis /etc/network/interfaces, nødvendig for at isolasjonssjekken skal fungere reelt (se v2.6→v2.7-changelog) |
+| services.yaml | Oppdatert 25. juli — widgets: (flertall) for alle 6 overvåkede noder, Proxmox utvidet med node+disk, to nye customapi-fliser (Isolasjon, Backup-status) |
 
 **Versjonskontroll (nytt 16. juli):** Playbooks er nå et git-repo, pushet til github.com/Idiri/WDhomelab. Vault-passordet ligger kun lokalt på mgmt-node (`/root/.vault_pass`, gitignored, chmod 600) — aldri i repoet.
 
@@ -260,6 +307,10 @@ Host opnsense
 | Fase 15 — OPNsense-tilgang gjenopprettet og auditert | SSH-nøkkel og sshlockout-blokkering løst via Proxmox-konsoll. pfctl-audit avdekket manglende inter-segment filtrering | Kritisk sikkerhetshull identifisert |
 | Fase 16 — Inter-segment brannmurregel | Blokkeringsregel 10.0.0.x → 192.168.1.x lagt til og verifisert fra Metasploitable | Lab-nettet kan ikke lenger nå hjemmenettet |
 | Fase 17 — OPNsense admin-tilgang (forsøk) | LAN- og Floating-regler forsøkt for å begrense adminporter til Kali. OPNsense sine auto-genererte service-regler viste seg å ha høyere prioritet enn begge | Akseptert som dokumentert restrisiko — reell fiks krever WAN-side omstrukturering |
+| Fase 18 — Uptime Kuma + status-api utrullet (CT 204) | Egen container for Kuma, status-api-sidecar på CT 203, 6 monitorer + 6 statussider opprettet, port 3001 låst med DOCKER-USER | Full overvåking av alle 6 noder etablert |
+| Fase 19 — Dashboard koblet til reelle datakilder | services.yaml wired med uptimekuma/customapi-widgets for alle fliser, Proxmox utvidet med cpu/mem/disk | Homepage viser reell status, ikke bare lenker |
+| Fase 20 — To kritiske bugs funnet og fikset under verifisering | (1) Homepage sin Proxmox-widget hadde aldri faktisk autentisert siden 24. juli (manglende scp-steg i push_homepage_secrets.yml). (2) Isolasjonssjekken testet aldri faktisk OPNsense-regelen fra Kali (manglende policy-ruting) — Fase 16 sin opprinnelige verifisering fra Metasploitable var derimot gyldig | Begge fikset og reverifisert med ekte data — se v2.6→v2.7-changelog for full diagnostikk |
+| Fase 21 — Live brannmur-toggle-test | OPNsense sin inter-segment-blokkeringsregel midlertidig fjernet via pfctl (config.xml urørt) for å bevise isolasjonsflisen følger reell tilstand, gjenopprettet via configctl filter reload | Isolasjonsflisen bekreftet reelt funksjonell, ikke en statisk placeholder |
 
 ### Kritiske lærdommer
 
@@ -271,6 +322,10 @@ Host opnsense
 - OPNsense auto-genererer ubetingede tillat-regler for aktiverte tjenester (SSH/webConfigurator) på hvert lyttende interface — disse har HØYERE prioritet enn både vanlige interface-regler og Floating-regler, og kan ikke overstyres kun gjennom regelrekkefølge i GUI-en. Reell kildebegrensning krever endring av "Listen Interfaces" i System → Settings → Administration, ikke bare brannmurregler
 - Gjentatte mislykkede SSH-forsøk mot OPNsense trigger SSHGuard (pf-tabellen sshlockout), som blokkerer ALL TCP-trafikk fra kildeadressen — ikke bare SSH. Løs med `pfctl -t sshlockout -T flush` fra en lokal konsoll dersom man blir låst ute
 - Et konsistent 100% pakketap i ping er en pålitelig indikator på en fungerende "block/drop"-brannmurregel; curl sine feilmeldinger ("connection refused" vs "couldn't connect" vs SSL-feil) kan være misvisende og bør ikke tolkes bokstavelig uten å se rå-output fra kommandoen
+- En dual-homed node (Kali) kan IKKE stole på destinasjons-basert ruting alene for å teste "kilde X mot mål Y via interface Z" når den samme node også har en direkte, konkurrerende rute til samme mål-subnett via et annet interface — den direkte ruten vinner alltid, uansett `--interface`-binding i applikasjonslaget. Policy-basert (kilde-basert) ruting (`ip rule from <IP> table <N>`) er nødvendig for å tvinge trafikk gjennom det tiltenkte interfacet
+- "Pakker passerte brannmuren" (iptables/pf-tellere > 0) er IKKE bevis på at et API-kall lyktes — det beviser kun at TCP/TLS-håndtrykket kom gjennom. Et 401/403-svar genererer akkurat like mange pakker som et 200-svar. Verifiser alltid det faktiske HTTP-svaret, ikke bare at trafikken "kom fram"
+- `pct push` sin kildesti er ALLTID lokal til verten der `pct`-kommandoen selv kjører (Proxmox-hosten), aldri til der Ansible/skriptet selv kjører (mgmt-node) — selv når kommandoen kalles via en `hosts: localhost`-playbook på mgmt-node. Filer må scp'es til proxmox FØRST. Dette har nå bitt prosjektet flere ganger (dokumentert i setup_homepage.yml, gjentatt i push_homepage_secrets.yml) — sjekk ALLTID for dette mønsteret i nye pct push-kall, og bruk `failed_when: "'failed to open' in ...stdout"` konsekvent, siden `pct push` returnerer exit 0 selv når kildefilen mangler
+- Under Proxmox sin privilege separation (`privsep=1`, standard for nye API-tokens) gjelder en bruker-nivå-ACL IKKE automatisk for tokenet selv — tokenet trenger sin egen `type: token`-ACL-oppføring for samme rolle/sti, ellers feiler enkelte (men ikke nødvendigvis alle) endepunkter med 403 Sys.Audit, avhengig av hvor strengt hvert enkelt PVE-API-endepunkt sjekker
 
 ---
 
@@ -297,8 +352,16 @@ curl -I http://192.168.1.203
 # 6. Verifiser Tailscale
 tailscale status
 
-# 7. Verifiser Homepage-dashboard (nytt 24. juli)
+# 7. Verifiser Homepage-dashboard
 curl -I http://192.168.1.204:3000
+
+# 8. Verifiser Uptime Kuma (nytt 25. juli)
+curl -I http://192.168.1.205:3001
+
+# 9. Verifiser isolasjonssjekk- og backup-timerne kjører (nytt 25. juli)
+ssh mgmt "systemctl is-active isolation-check.timer"
+ssh proxmox "systemctl is-active backups-check.timer"
+ssh proxmox "pct exec 203 -- cat /opt/homepage/status/isolation.json /opt/homepage/status/backups.json"
 ```
 
 ### Baseline snapshots & backups
@@ -379,8 +442,11 @@ git push
 | ✅ Ferdig | Push Ansible-playbooks til Git for backup | Gjort 16. juli — Ansible Vault-kryptert, GitHub: Idiri/WDhomelab |
 | ✅ Ferdig | Proxmox REST API/spiceproxy eksponert på vmbr1 | Gjort 16. juli — port 3128 låst, vmbr1 har ingen host-IP |
 | ✅ Ferdig | Dokumenter OPNsense firewall-regler (inter-segment policy vmbr0↔vmbr1) | Gjort 16. juli — se pfctl-audit i denne loggen |
-| ✅ Ferdig | Legg til OPNsense-regel: blokker 10.0.0.x → 192.168.1.x | Gjort 16. juli — verifisert fra Metasploitable |
-| 🟡 Lav | Rydd opp/fjern misvisende FORWARD-regel for port 3000 på Proxmox-host | Nytt 25. juli — regelen er dead code (ts-forward ACCEPTerer terminalt først, se v2.6-changelog). Ufarlig å beholde, men bør enten fjernes eller kommenteres tydelig som ikke-funksjonell så neste debugging-økt ikke bruker tid på samme feilslutning |
+| ✅ Ferdig | Legg til OPNsense-regel: blokker 10.0.0.x → 192.168.1.x | Gjort 16. juli — verifisert fra Metasploitable, og på nytt 25. juli med en genuint gyldig test fra Kali (se v2.6→v2.7-changelog) |
+| ✅ Ferdig | Uptime Kuma + dashboard koblet til reelle datakilder (Fase 2 av dashboard-prosjektet) | Gjort 25. juli — CT 204 utrullet, 6 monitorer, services.yaml wired, isolasjons- og backup-timere live, end-to-end verifisert inkl. live brannmur-toggle |
+| 🟡 Lav | Rydd opp/fjern misvisende FORWARD-regel for port 3000 på Proxmox-host | Fra 25. juli (v2.6) — regelen er dead code (ts-forward ACCEPTerer terminalt først). Ufarlig å beholde, men bør enten fjernes eller kommenteres tydelig som ikke-funksjonell så neste debugging-økt ikke bruker tid på samme feilslutning |
+| 🟡 Lav | Fjern det uferdige Fase 17-forsøket sin leftover-regel på OPNsense (`block drop ... (vtnet1:network) to (self)`) | Nytt 25. juli — regelen blokkerer ikke-TCP/ikke-DHCP trafikk fra lab-nettet til OPNsense sin egen LAN-IP (oppdaget da den ga falsk "down" på OPNsense-pushmonitoren). Kompensert på overvåkingssiden (heartbeat bruker nå TCP/443), men selve regelen er fortsatt et uryddig sluttresultat av et abandonnert forsøk — bør enten fullføres (Fase 17 sin opprinnelige hensikt) eller fjernes ryddig |
+| 🟡 Lav | Restruktur Kalis policy-ruting til en dedikert, navngitt rutetabell | Nytt 25. juli — bruker i dag numerisk `table 100` uten oppføring i /etc/iproute2/rt_tables. Fungerer fint, men et navn (f.eks. `labnet`) ville gjort `ip rule`/`ip route`-output lettere å lese for neste økt |
 | 🔴 Høy | Bytt fra root SSH til dedikerte brukere på alle noder | Ikke gjort |
 | 🔴 Høy | Begrens OPNsense admin-tilgang (port 22/80/443 på LAN) til kun Kali | Forsøkt 16. juli, ikke løst — OPNsense sine auto-genererte service-regler overstyrer både interface- og Floating-regler. Krever WAN-side omstrukturering (endre Listen Interfaces + eksplisitt WAN-regel for Kalis WAN-IP) |
 | 🟠 Medium (delvis adressert) | Skaler ned Ansible API-token til minste privilegium | Nytt 16. juli, delvis adressert 24. juli — Homepage sin dashboard-widget bruker nå en egen minste-privilegium-token (PVEAuditor, les-only). Den OPPRINNELIGE `ansible`-provisjoneringstokenet (root@pam, privsep 0) er IKKE rørt og har fortsatt full root-ekvivalent tilgang — det gjenstår å skalere ned |
@@ -403,7 +469,8 @@ git push
 |---|---|---|
 | Internett-eksponering | ✅ Ingen | Ingen åpne porter mot internett |
 | Nettverkssegmentering | ✅ OK | vmbr0 / vmbr1 med OPNsense mellom |
-| Inter-segment filtrering (10.0.0.x → 192.168.1.x) | ✅ Sikret | Blokkeringsregel aktiv og verifisert 16. juli — lab-nettet kan ikke lenger nå hjemmenettet |
+| Inter-segment filtrering (10.0.0.x → 192.168.1.x) | ✅ Sikret | Blokkeringsregel aktiv. Verifisert 16. juli fra Metasploitable (gyldig test), OG på nytt 25. juli med en genuint gyldig test fra Kali via policy-ruting (se v2.6→v2.7-changelog — den opprinnelige Kali-baserte testmetoden hadde en rutingsvakhet som ga et falskt "isolert"-resultat uavhengig av regelens faktiske tilstand). Live toggle-test (regel av → HTTP 200, regel på → HTTP 000) bekrefter isolasjonsflisen på dashbordet er en reell sikkerhetsindikator, ikke en statisk verdi |
+| OPNsense — leftover-regel fra uferdig Fase 17-forsøk | 🟡 Ufarlig, men uryddig | `block drop in quick inet from (vtnet1:network) to (self)` blokkerer ikke-TCP/ikke-DHCP trafikk (bl.a. ICMP) fra lab-nettet til OPNsense sin egen LAN-IP. Ingen sikkerhetsrisiko (strengere, ikke svakere enn tiltenkt), men ga falsk "down" på OPNsense-pushmonitoren til det ble oppdaget 25. juli. Se Åpne punkter |
 | Ekstern tilgang | ✅ Tailscale | Subnet router på Proxmox-host. NB: ip_forward-regresjon rettet 25. juli — se v2.6-changelog. Rute til 192.168.1.0/24 nå persistert og godkjent |
 | Proxmox web UI | ✅ Låst (med to navngitte unntak) | iptables blokkerer 8006 på LAN generelt — kun 100.108.236.64:8006 via Tailscale, pluss eksplisitte kildeunntak for 192.168.1.200 (mgmt-node, Ansible-provisjonering) og 192.168.1.204 (homepage, dashboard-widget). Se Merk (24. juli) |
 | Proxmox REST API/spiceproxy på vmbr1 | ✅ Sikret | vmbr1 har ingen host-IP — ingen rute fra 10.0.0.x til hypervisoren. Port 8006 og 3128 begge låst til tailscale0 via iptables |
@@ -412,6 +479,8 @@ git push
 | OPNsense admin-porter (22/80/443) på LAN | ⚠️ Åpne for hele 10.0.0.x | Alle lab-nett-noder kan nå OPNsense sin GUI/SSH, ikke bare Kali. Kompenserende kontroll: nøkkelbasert SSH + påloggingskrav på GUI. Reell fiks krever WAN-side omstrukturering (se Åpne punkter) |
 | iptables persistens | ✅ Bekreftet | Lagret til /etc/iptables/rules.v4 — overlever reboot, verifisert på Proxmox-host og CT 203 |
 | Homepage-dashboard (CT 203, port 3000) | ✅ Sikret | Reell håndheving er ETT lag: DOCKER-USER-regelen i CT 203 (kun kilde 192.168.1.50). FORWARD-regelen på Proxmox-hosten er dokumentert dead code — Tailscale sin egen ts-forward-kjede ACCEPTerer terminalt før den nås (se v2.6-changelog). Verifisert 25. juli: simulert av-LAN Tailscale-klient (tvunget rute via utun) sluppet gjennom (HTTP 200), ekte LAN-kilde uten Tailscale (mgmt-node) fortsatt blokkert (HTTP 000) |
-| Ansible API-token privilegier | ⚠️ Delvis forbedret | Det opprinnelige `ansible`-provisjoneringstokenet har fortsatt full root-ekvivalent tilgang. Ny, separat minste-privilegium-token (PVEAuditor, les-only) innført 24. juli for Homepage sin dashboard-widget — men dette er et NYTT, ekstra token, ikke en nedskalering av det gamle |
-| Git/secrets-hygiene | ✅ Sikret | proxmox_vars.yml og homepage_vars.yml Ansible Vault-kryptert, .git-credentials og .gitconfig gitignored, ingen klartekst-hemmeligheter i git-historikk |
+| Ansible API-token privilegier | ⚠️ Delvis forbedret | Det opprinnelige `ansible`-provisjoneringstokenet har fortsatt full root-ekvivalent tilgang. Ny, separat minste-privilegium-token (PVEAuditor, les-only) innført 24. juli for Homepage sin dashboard-widget — men dette er et NYTT, ekstra token, ikke en nedskalering av det gamle. 25. juli: token-nivå-ACL (påkrevd under privsep=1, manglet siden opprettelsen) lagt til for dette tokenet — ingen nye rettigheter utover det allerede vedtatte PVEAuditor-formålet, kun en fullføring av en ufullstendig implementert tildeling. Tokenet fungerer nå faktisk (se neste rad) |
+| Homepage sin Proxmox-widget — credentials | ✅ Fikset 25. juli | Hadde ALDRI faktisk autentisert siden 24. juli — `.env` med token ble aldri levert til CT 203 pga. en `pct push`-kildesti-bug i push_homepage_secrets.yml (fikset), OG det manglende token-nivå-ACL-et over. Begge fikset 25. juli, verifisert med et ekte 200-svar fra Proxmox sin API |
+| Uptime Kuma (CT 204, port 3001) | ✅ Sikret | Samme DOCKER-USER-mønster som Homepage (kun navngitte kilde-unntak), pluss korrekt scopet `-i lo -j ACCEPT` for containerens lokale 127.0.0.1-binding. CT 203 revidert i etterkant og bekreftet IKKE eksponert for samme loopback-bug (publiserer aldri til 127.0.0.1) |
+| Git/secrets-hygiene | ✅ Sikret | proxmox_vars.yml og homepage_vars.yml Ansible Vault-kryptert, .git-credentials og .gitconfig gitignored, ingen klartekst-hemmeligheter i git-historikk. 25. juli: én nesten-glipp der en `ansible-vault view` ble utilsiktet omdirigert til en lokal fil på Mac-en i stedet for prosessert server-side — filen ble aldri lest/vist og slettet umiddelbart, ingen hemmelighet eksponert i samtaleloggen |
 | Logging/SIEM | ❌ Mangler | Ingen synlighet på nettverksnivå |

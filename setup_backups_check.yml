@@ -1,0 +1,26 @@
+---
+# Installerer backups_check.py + systemd-timer PA Proxmox-hosten selv (ikke i en
+# container -- ingen pct push av selve skriptet/enhetene nodvendig, kun scp).
+- name: Installer backup/snapshot-alderssjekk på Proxmox-hosten
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Scp backups_check.py til proxmox-host
+      command: "scp backups_check.py root@192.168.1.50:/root/backups_check.py"
+
+    - name: Scp systemd-enheter til proxmox-host
+      command: "scp {{ item }} root@192.168.1.50:/root/{{ item }}"
+      loop:
+        - backups-check.service
+        - backups-check.timer
+
+    - name: Installer systemd-enheter på proxmox-host
+      command: "ssh root@192.168.1.50 {{ item }}"
+      loop:
+        - "cp /root/backups-check.service /etc/systemd/system/backups-check.service"
+        - "cp /root/backups-check.timer /etc/systemd/system/backups-check.timer"
+        - "rm -f /root/backups-check.service /root/backups-check.timer"
+        - "systemctl daemon-reload"
+        - "systemctl enable --now backups-check.timer"

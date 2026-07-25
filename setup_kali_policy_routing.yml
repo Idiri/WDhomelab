@@ -1,0 +1,36 @@
+---
+# Persisterer policy-ruting (kilde-basert, source 10.0.0.10 -> table 100 via
+# OPNsense) i Kali sin /etc/network/interfaces, slik at isolasjonssjekk-timeren
+# på mgmt-node faktisk ruter via OPNsense i stedet for å feile lokalt på Kalis
+# egen rutingtabell (se homelab.md v2.7 for hvorfor dette var nødvendig).
+- name: Persister policy-ruting for eth1 på Kali (202)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Scp oppdatert interfaces-fil til proxmox-host
+      command: "scp kali_interfaces root@192.168.1.50:/root/kali_interfaces"
+
+    - name: Push interfaces-fil til Kali (202)
+      command: "ssh root@192.168.1.50 pct push 202 /root/kali_interfaces /etc/network/interfaces"
+      register: push_if
+      failed_when: "'failed to open' in push_if.stdout"
+
+    - name: Scp anvend-skript til proxmox-host
+      # Pusher en fil og kjører den, i stedet for å neste "sh -c '...'" gjennom
+      # ssh-hoppet mgmt -> proxmox -- ssh flater ut mellomrom-separerte
+      # argumenter og ødelegger de indre anførselstegnene (samme fallgruve som
+      # dokumentert i setup_homepage.yml).
+      command: "scp kali_apply_routing.sh root@192.168.1.50:/root/kali_apply_routing.sh"
+
+    - name: Push anvend-skript til Kali (202)
+      command: "ssh root@192.168.1.50 pct push 202 /root/kali_apply_routing.sh /root/kali_apply_routing.sh"
+      register: push_script
+      failed_when: "'failed to open' in push_script.stdout"
+
+    - name: Anvend policy-ruting umiddelbart (ifdown/ifup eth1 -- rører ikke eth0/SSH-tilgang)
+      command: "ssh root@192.168.1.50 pct exec 202 -- sh /root/kali_apply_routing.sh"
+
+    - name: Rydd opp midlertidige filer på proxmox-host
+      command: "ssh root@192.168.1.50 rm -f /root/kali_interfaces /root/kali_apply_routing.sh"

@@ -1,0 +1,35 @@
+---
+# Samme mønster/kjente fallgruver som setup_homepage.yml: filer scp'es til
+# proxmox-host først (pct push tar kildesti relativt til host-exec-hoppet, ikke
+# mgmt-node), og "failed to open" i stdout sjekkes eksplisitt siden pct push
+# ellers returnerer exit 0 selv ved manglende kildefil.
+- name: Konfigurer Uptime Kuma-container via Host-exec
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Scp docker-compose.yml (kuma) til proxmox-host
+      command: "scp docker-compose-kuma.yml root@192.168.1.50:/root/docker-compose-kuma.yml"
+
+    - name: Scp bootstrap-skript til proxmox-host
+      command: "scp uptimekuma_bootstrap.sh root@192.168.1.50:/root/uptimekuma_bootstrap.sh"
+
+    - name: Opprett /opt/uptime-kuma/data i container
+      command: "ssh root@192.168.1.50 pct exec 204 -- mkdir -p /opt/uptime-kuma/data"
+
+    - name: Push docker-compose.yml til container
+      command: "ssh root@192.168.1.50 pct push 204 /root/docker-compose-kuma.yml /opt/uptime-kuma/docker-compose.yml"
+      register: push_compose
+      failed_when: "'failed to open' in push_compose.stdout"
+
+    - name: Push bootstrap-skript til container
+      command: "ssh root@192.168.1.50 pct push 204 /root/uptimekuma_bootstrap.sh /root/uptimekuma_bootstrap.sh"
+      register: push_bootstrap
+      failed_when: "'failed to open' in push_bootstrap.stdout"
+
+    - name: Kjør bootstrap-skript i container (Docker-install, compose up, iptables)
+      command: "ssh root@192.168.1.50 pct exec 204 -- sh /root/uptimekuma_bootstrap.sh"
+
+    - name: Rydd opp midlertidige filer på proxmox-host
+      command: "ssh root@192.168.1.50 rm -f /root/docker-compose-kuma.yml /root/uptimekuma_bootstrap.sh"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run backup/snapshot age check hourly
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1h
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,42 @@
+---
+# Legger til status-api-tjenesten på eksisterende CT 203 (Homepage): oppdatert
+# docker-compose.yml, ./status-mappen med startverdier, og "docker compose up -d"
+# for å hente det nye image-et uten å restarte homepage-tjenesten unødvendig.
+- name: Legg til status-api sidecar på Homepage-container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Scp oppdatert docker-compose.yml til proxmox-host
+      command: "scp docker-compose-homepage.yml root@192.168.1.50:/root/docker-compose-homepage.yml"
+
+    - name: Scp placeholder isolation.json til proxmox-host
+      command: "scp isolation.json root@192.168.1.50:/root/isolation.json"
+
+    - name: Scp placeholder backups.json til proxmox-host
+      command: "scp backups.json root@192.168.1.50:/root/backups.json"
+
+    - name: Opprett /opt/homepage/status i container
+      command: "ssh root@192.168.1.50 pct exec 203 -- mkdir -p /opt/homepage/status"
+
+    - name: Push oppdatert docker-compose.yml til container
+      command: "ssh root@192.168.1.50 pct push 203 /root/docker-compose-homepage.yml /opt/homepage/docker-compose.yml"
+      register: push_compose
+      failed_when: "'failed to open' in push_compose.stdout"
+
+    - name: Push placeholder isolation.json til container
+      command: "ssh root@192.168.1.50 pct push 203 /root/isolation.json /opt/homepage/status/isolation.json"
+      register: push_isolation
+      failed_when: "'failed to open' in push_isolation.stdout"
+
+    - name: Push placeholder backups.json til container
+      command: "ssh root@192.168.1.50 pct push 203 /root/backups.json /opt/homepage/status/backups.json"
+      register: push_backups
+      failed_when: "'failed to open' in push_backups.stdout"
+
+    - name: docker compose up -d (henter status-api, ingen restart av homepage nødvendig)
+      command: "ssh root@192.168.1.50 pct exec 203 -- sh -c 'cd /opt/homepage && docker compose up -d'"
+
+    - name: Rydd opp midlertidige filer på proxmox-host
+      command: "ssh root@192.168.1.50 rm -f /root/docker-compose-homepage.yml /root/isolation.json /root/backups.json"

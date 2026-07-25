@@ -4,11 +4,35 @@
         icon: proxmox.png
         href: https://192.168.1.50:8006
         description: Hypervisor
+        widgets:
+          - type: proxmox
+            url: https://192.168.1.50:8006
+            username: "{{HOMEPAGE_VAR_PROXMOX_TOKEN_ID}}"
+            password: "{{HOMEPAGE_VAR_PROXMOX_TOKEN_SECRET}}"
+            node: proxy
+          - type: uptimekuma
+            url: http://192.168.1.205:3001
+            slug: proxmox-host
+          - type: customapi
+            url: https://192.168.1.50:8006/api2/json/nodes/proxy/status
+            headers:
+              Authorization: "{{HOMEPAGE_VAR_PROXMOX_AUTH_HEADER}}"
+            mappings:
+              - field: data.rootfs.used
+                label: Disk brukt
+                format: bytes
+              - field: data.rootfs.total
+                label: Disk totalt
+                format: bytes
+
+    - mgmt-node:
+        icon: mdi-ansible
+        href: http://192.168.1.200
+        description: Ansible-kontrollnode
         widget:
-          type: proxmox
-          url: https://192.168.1.50:8006
-          username: "{{HOMEPAGE_VAR_PROXMOX_TOKEN_ID}}"
-          password: "{{HOMEPAGE_VAR_PROXMOX_TOKEN_SECRET}}"
+          type: uptimekuma
+          url: http://192.168.1.205:3001
+          slug: mgmt-node
 
     - OPNsense:
         icon: opnsense.png
@@ -17,20 +41,76 @@
           Firewall/gateway for lab-nettet. Lenken fungerer kun fra Kali eller via
           den eksisterende SSH-tunnelen (ssh -L 8443:10.0.0.1:443 kali) — ingen
           direkte rute fra vmbr0.
+        widget:
+          type: uptimekuma
+          url: http://192.168.1.205:3001
+          slug: opnsense
 
     - web-01:
         icon: nginx.png
         href: http://192.168.1.203
         description: Nginx 1.22.1 — mål-webserver
+        widget:
+          type: uptimekuma
+          url: http://192.168.1.205:3001
+          slug: web-01
+
+    - Isolasjon (10.0.0.x -> 192.168.1.x):
+        icon: mdi-shield-lock
+        description: >-
+          Inter-segment brannmur-sjekk, oppdatert av en systemd-timer på
+          mgmt-node som sjekker over Kalis eth1
+        widget:
+          type: customapi
+          url: http://status-api:8080/isolation.json
+          mappings:
+            - field: status
+              label: Status
+              format: text
+            - field: http_code
+              label: HTTP-kode
+              format: text
+            - field: last_checked
+              label: Sist sjekket
+              format: text
+
+    - Backup-status:
+        icon: mdi-database-clock
+        description: >-
+          Snapshot/backup-alder, oppdatert av en systemd-timer på Proxmox-hosten
+        widget:
+          type: customapi
+          url: http://status-api:8080/backups.json
+          mappings:
+            - field: opnsense_snapshot_days_ago
+              label: OPNsense snapshot
+              format: text
+            - field: metasploitable_snapshot_days_ago
+              label: Metasploitable snapshot
+              format: text
+            - field: last_vzdump_days_ago
+              label: Siste vzdump
+              format: text
+            - field: last_checked
+              label: Sist sjekket
+              format: text
 
 - Angrepslab:
     - Kali:
         icon: kali-linux.png
         href: http://192.168.1.202
         description: Angrepsnode (dual-homed) — kun lenke, ingen stats
+        widget:
+          type: uptimekuma
+          url: http://192.168.1.205:3001
+          slug: kali-01
 
     - Metasploitable:
         icon: mdi-skull
         description: >-
           Bevisst sårbart mål (10.0.0.176) — ikke en reell tjeneste. Strukturelt
           isolert på vmbr1, ingen rute fra vmbr0/Homepage.
+        widget:
+          type: uptimekuma
+          url: http://192.168.1.205:3001
+          slug: metasploitable

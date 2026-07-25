@@ -1,0 +1,29 @@
+# This file describes the network interfaces available on your system
+# and how to activate them. For more information, see interfaces(5).
+
+# The loopback network interface
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+	address 192.168.1.202/24
+	gateway 192.168.1.254
+
+auto eth1
+iface eth1 inet static
+	address 10.0.0.10
+	netmask 255.255.255.0
+	# Policy-basert (kilde-basert) ruting -- uten dette taper ruten til
+	# 192.168.1.0/24 via OPNsense (10.0.0.1) alltid mot den direkte tilkoblede
+	# ruten via eth0 (Kali er dual-homed på samme mål-subnett), og trafikk
+	# initiert med kilde 10.0.0.10 ARP-er lokalt på eth1 i stedet for å nå
+	# OPNsense i det hele tatt. Funnet 25. juli under verifisering av
+	# isolasjonssjekk-timeren -- se homelab.md v2.7. Tabell 100 brukes kun for
+	# trafikk med kilde 10.0.0.10 spesifikt; endrer ingenting for andre noder.
+	up ip route add 192.168.1.0/24 via 10.0.0.1 dev eth1 table 100
+	up ip rule add from 10.0.0.10 table 100 priority 100
+	down ip rule del from 10.0.0.10 table 100 priority 100
+	down ip route del 192.168.1.0/24 via 10.0.0.1 dev eth1 table 100
+
+source /etc/network/interfaces.d/*.cfg

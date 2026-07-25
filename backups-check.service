@@ -1,0 +1,6 @@
+[Unit]
+Description=Backup/snapshot age check -> Homepage status tile (CT 203)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /root/backups_check.py

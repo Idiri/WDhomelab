@@ -1,0 +1,33 @@
+---
+# Installerer isolation_check.sh + systemd-timer direkte på mgmt-node (localhost
+# for denne playbooken) -- ingen pct push nødvendig, i motsetning til Kali- og
+# Proxmox-timerne, siden dette skriptet kjører der Ansible selv kjører.
+- name: Installer inter-segment isolasjonssjekk på mgmt-node
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Kopier isolation_check.sh til /root
+      copy:
+        src: isolation_check.sh
+        dest: /root/isolation_check.sh
+        mode: "0755"
+
+    - name: Kopier systemd service-fil
+      copy:
+        src: isolation-check.service
+        dest: /etc/systemd/system/isolation-check.service
+        mode: "0644"
+
+    - name: Kopier systemd timer-fil
+      copy:
+        src: isolation-check.timer
+        dest: /etc/systemd/system/isolation-check.timer
+        mode: "0644"
+
+    - name: Reload systemd og aktiver timer
+      command: "{{ item }}"
+      loop:
+        - systemctl daemon-reload
+        - systemctl enable --now isolation-check.timer

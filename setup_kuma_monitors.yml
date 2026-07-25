@@ -1,0 +1,59 @@
+---
+# Kjøres automatisk (ikke manuelt) -- i motsetning til push_homepage_secrets.yml
+# er ikke dette et ekte eksternt system-passord (Proxmox-token), men en NY lokal
+# admin-konto denne playbooken selv oppretter for Uptime Kuma. Genereres og
+# krypteres server-side på mgmt-node, vises aldri i en chat-samtale, samme
+# håndteringsmønster som homepage_vars.yml likevel.
+- name: Sett opp Uptime Kuma admin-konto, monitorer og status-sider
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - uptimekuma_vars.yml
+
+  tasks:
+    - name: Render midlertidig .env lokalt
+      copy:
+        content: |
+          KUMA_ADMIN_USER={{ kuma_admin_username }}
+          KUMA_ADMIN_PASS={{ kuma_admin_password }}
+        dest: /root/.kuma.env.tmp
+        mode: "0600"
+      no_log: true
+
+    - name: Scp oppsettskript og wrapper til proxmox-host
+      command: "scp {{ item }} root@192.168.1.50:/root/{{ item }}"
+      loop:
+        - kuma_setup.py
+        - kuma_run.sh
+
+    - name: Scp midlertidig .env til proxmox-host
+      command: "scp /root/.kuma.env.tmp root@192.168.1.50:/root/.kuma.env.tmp"
+      no_log: true
+
+    - name: Push filer til container 204
+      command: "ssh root@192.168.1.50 pct push 204 /root/{{ item }} /root/{{ item }}"
+      loop:
+        - kuma_setup.py
+        - kuma_run.sh
+        - .kuma.env.tmp
+      no_log: "{{ item == '.kuma.env.tmp' }}"
+
+    - name: Kjør oppsettskript i container (oppretter admin-konto, monitorer, status-sider)
+      command: "ssh root@192.168.1.50 pct exec 204 -- sh /root/kuma_run.sh"
+      register: kuma_setup_result
+
+    - name: Vis resultat
+      debug:
+        var: kuma_setup_result.stdout_lines
+
+    - name: Rydd opp midlertidige filer i container
+      command: "ssh root@192.168.1.50 pct exec 204 -- rm -f /root/.kuma.env.tmp /root/kuma_setup.py /root/kuma_run.sh"
+
+    - name: Rydd opp midlertidige filer på proxmox-host
+      command: "ssh root@192.168.1.50 rm -f /root/.kuma.env.tmp /root/kuma_setup.py /root/kuma_run.sh"
+
+    - name: Rydd opp midlertidig .env lokalt på mgmt-node
+      file:
+        path: /root/.kuma.env.tmp
+        state: absent

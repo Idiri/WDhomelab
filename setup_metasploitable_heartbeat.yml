@@ -1,0 +1,34 @@
+---
+- name: Installer Metasploitable-heartbeat-skript og cron på Kali
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Scp heartbeat-skript til proxmox-host
+      command: "scp metasploitable_heartbeat.sh root@192.168.1.50:/root/metasploitable_heartbeat.sh"
+
+    - name: Push heartbeat-skript til Kali (202)
+      command: "ssh root@192.168.1.50 pct push 202 /root/metasploitable_heartbeat.sh /root/metasploitable_heartbeat.sh"
+      register: push_hb
+      failed_when: "'failed to open' in push_hb.stdout"
+
+    - name: Scp systemd-enheter og installasjonsskript til proxmox-host
+      command: "scp {{ item }} root@192.168.1.50:/root/{{ item }}"
+      loop:
+        - metasploitable-heartbeat.service
+        - metasploitable-heartbeat.timer
+        - install_heartbeat_cron.sh
+
+    - name: Push systemd-enheter og installasjonsskript til Kali (202)
+      command: "ssh root@192.168.1.50 pct push 202 /root/{{ item }} /root/{{ item }}"
+      loop:
+        - metasploitable-heartbeat.service
+        - metasploitable-heartbeat.timer
+        - install_heartbeat_cron.sh
+
+    - name: Kjør installasjonsskript i container (systemd-timer, hvert minutt)
+      command: "ssh root@192.168.1.50 pct exec 202 -- sh /root/install_heartbeat_cron.sh"
+
+    - name: Rydd opp midlertidige filer på proxmox-host
+      command: "ssh root@192.168.1.50 rm -f /root/metasploitable_heartbeat.sh /root/install_heartbeat_cron.sh /root/metasploitable-heartbeat.service /root/metasploitable-heartbeat.timer"

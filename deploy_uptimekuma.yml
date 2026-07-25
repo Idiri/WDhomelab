@@ -1,0 +1,29 @@
+---
+# Samme "host-exec" pct-create-mønster som deploy_homepage.yml / deploy_kali.yml.
+# Egen container (204) i stedet for å samlokalisere med Homepage på CT 203:
+# CT 203 har kun ca. 83MB ledig RAM under normal drift, og repoet følger allerede
+# ett-tjeneste-per-CT-mønsteret (200/201/202/203). Overvåkning bør heller ikke dele
+# feilpunkt med det den overvåker.
+- name: Deploy Uptime Kuma container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Opprett Uptime Kuma container 204
+      command: >
+        ssh root@192.168.1.50
+        pct create 204
+        local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+        --hostname uptime-kuma
+        --cores 1
+        --memory 1024
+        --swap 512
+        --rootfs local:6
+        --net0 name=eth0,bridge=vmbr0,ip=192.168.1.205/24,gw=192.168.1.254
+        --nameserver 8.8.8.8
+        --unprivileged 1
+        --features nesting=1
+
+    - name: Start Uptime Kuma container
+      command: "ssh root@192.168.1.50 pct start 204"

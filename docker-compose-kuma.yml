@@ -1,0 +1,10 @@
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "192.168.1.205:3001:3001"
+      - "127.0.0.1:3001:3001" # kun for lokale admin-/oppsettsskript kjørt inne i containeren, aldri eksponert utad
+    volumes:
+      - ./data:/app/data

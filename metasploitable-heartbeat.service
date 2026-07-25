@@ -1,0 +1,6 @@
+[Unit]
+Description=Metasploitable reachability heartbeat -> Uptime Kuma push monitor
+
+[Service]
+Type=oneshot
+ExecStart=/root/metasploitable_heartbeat.sh
