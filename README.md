@@ -9,11 +9,14 @@ changelog og driftsdokumentasjon — det er eneste kilde til sannhet for denne l
 For en offentlig, sanitert portefølje-versjon (arkitekturdiagram, skjermbilde, "hva
 dette demonstrerer"), se [github.com/Idiri/homelab](https://github.com/Idiri/homelab).
 
-## Repo-rot = /root (mgmt-node)
+## Repo-rot = /root/ansible-homelab (mgmt-node)
 
-Denne repoen er rotet direkte i `/root` på mgmt-node (192.168.1.200), ikke en dedikert
-undermappe — se "Kjent strukturell svakhet" i docs/homelab.md. **Bruk aldri
-`git add -A` eller `git add .`** i denne repoen; legg alltid til filer ved navn.
+Flyttet hit fra `/root` direkte 20. august 2026 (Fase 26) — se v2.11→v2.12-changelog
+i docs/homelab.md. Repoet delte tidligere working directory med SSH-nøkler,
+bash-historikk og andre sensitive filer i `/root`; en dedikert undermappe fjerner den
+blast-radius-risikoen strukturelt. God vane å legge til filer ved navn (ikke
+`git add -A`) beholdes uansett, men er ikke lenger den eneste barrieren mot å committe
+noe utenfor repoet.
 
 ## Innhold (kort)
 

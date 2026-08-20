@@ -1,6 +1,6 @@
-# Homelab 2.11
+# Homelab 2.12
 
-**Versjon:** 2.11 — 20. august 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.10 — 25. juli 2026
+**Versjon:** 2.12 — 20. august 2026 | **Status:** Fullt operasjonell | **Forrige versjon:** 2.11 — 20. august 2026
 
 ---
 
@@ -140,6 +140,15 @@
 | Ansible-provisjoneringstoken skalert ned til minste privilegium (Fase 25) | Opprinnelig `ansible`-token under `root@pam` (privsep=0, full root-ekvivalent tilgang) erstattet med nytt, dedikert token under egen bruker `ansible-provisioner@pve`, rolle `PVEVMAdmin` (VM/CT-administrasjon — allocate/config/power/snapshot/klon, ingen `Sys.Modify`, ingen bruker-/rettighetsadministrasjon). Samme mønster som `homepage-readonly@pve` fra 24. juli. Token og bruker opprettet manuelt på Proxmox-hosten (aldri av AI-assistenten). ACL satt eksplisitt på BÅDE bruker- og token-nivå (`pveum aclmodify / -user ...` og `-token ...`) — token-nivå-ACL er påkrevd under privsep=1; et første forsøk manglet begge ACL-oppføringene (verifisert tomt med `pveum acl list` før retting), samme klasse feil som homepage-tokenet i v2.7, oppdaget og rettet før videre verifisering |
 | Autentisering verifisert fra mgmt-node (reell kilde for Ansible-kjøringer) | `ansible-playbook -i hosts.ini deploy_ct.yml` kjørt to ganger fra mgmt-node med det nye tokenet — begge ganger `ok=1, changed=0`, ingen 401/403. Merk (ærlig begrensning): dette er et no-op siden CT 201 allerede eksisterer — bekrefter at det nye tokenet autentiserer og leser korrekt via API-et, men øver ALDRI selve opprettelses-kodeveien, som fra før er dokumentert ikke-fungerende for token-auth uavhengig av privilegienivå (se v2.4→v2.5-changelog og Ansible-filer-seksjonen). Denne kjente begrensningen er uendret av denne fasen — kun at det nye tokenet har korrekt autorisasjon er bekreftet her |
 | Opprinnelig root@pam-token revokert | `pveum user token remove root@pam ansible` kjørt og verifisert etterpå (ikke bare "ingen feil") — `pveum user token list root@pam` returnerer nå tomt, og `tokens`-kolonnen for root@pam i `pveum user list` er tom. Bekreftet ved kodegjennomgang før revokering at ingen annen fil i repoet refererer til dette tokenet (kun `deploy_ct.yml` brukte `proxmox_vars.yml`) |
+
+### Changelog (v2.11 → v2.12)
+
+| Endring | Detalj |
+|---|---|
+| Ansible git-repo flyttet fra /root til /root/ansible-homelab (Fase 26) | Alle 48 git-sporede filer + `.git` flyttet med `mv` (samme filsystem, atomisk per fil) fra mgmt-node sin `/root` til `/root/ansible-homelab/`. Ren filsystem-omorganisering — ingen git-historikk endret, `git status` viste tomt (bortsett fra den allerede eksisterende uncommitted `proxmox_vars.yml`-endringen fra Fase 25) umiddelbart etter flyttingen, siden git kun sporer relative stier innad i repoet, ikke repoets absolutte plassering. Usporede sensitive filer (`.ssh/`, `.bash_history`, `.ansible/`, `.git-credentials`, `.gitconfig`, `.vault_pass`) ble bevisst IKKE flyttet — de ligger nå strukturelt utenfor repoets working directory, ikke bare beskyttet av `.gitignore`/vane |
+| Live-tjeneste-risiko identifisert og håndtert: isolation-check.timer | `isolation-check.service` (kjører hvert minutt på mgmt-node) har `ExecStart=/root/isolation_check.sh` — et fast, ikke-git-relatert utrullingssted, samme mønster som `backups_check.py` på Proxmox-hosten. Siden skriptet også var det git-sporede kildefilen (repo-rot var /root), forsvant den fra sitt kjørested i det øyeblikket den ble flyttet. Håndtert ved å kopiere filen tilbake til `/root/isolation_check.sh` (`cp -p`, bevarer 0755-rettigheter) UMIDDELBART i samme skript som flyttingen — ingen separat, senere steg. Verifisert: `diff` mellom kjørende `/root/isolation_check.sh` og repo-kildefilen viste IDENTICAL, `systemctl status isolation-check.service` viste siste kjøring `status=0/SUCCESS`, og `isolation.json` på CT 203 fortsatte å oppdateres på minutt-intervallet uten avbrudd (verifisert med to sjekker med tidsmellomrom — se under) |
+| Ingen andre systemd-enheter påvirket | `backups-check.service` kjører på Proxmox-hosten sin egen `/root` (ikke mgmt-node), og `metasploitable-heartbeat.service` kjører på Kali sin egen `/root` (CT 202) — begge helt uavhengige filsystemer fra mgmt-nodens git-repo. `ansible.cfg` sin `vault_password_file = /root/.vault_pass` er en absolutt sti og upåvirket uansett hvor repoet selv ligger. Ingen av disse krevde endring |
+| README.md og Golden Path-instruksjoner oppdatert | README.md sin "Repo-rot = /root"-seksjon omskrevet til å reflektere ny plassering. `docs/homelab.md` sin "Ansible-endringer"-golden-path-kommando endret fra `cd /root` til `cd /root/ansible-homelab` |
 
 ---
 
@@ -288,7 +297,7 @@ Dette påvirker KUN trafikk som Kali selv originerer med kilde-IP 10.0.0.10 spes
 
 **Versjonskontroll (nytt 16. juli):** Playbooks er nå et git-repo, pushet til github.com/Idiri/WDhomelab. Vault-passordet ligger kun lokalt på mgmt-node (`/root/.vault_pass`, gitignored, chmod 600) — aldri i repoet.
 
-**Kjent strukturell svakhet (ikke fikset):** Git-repoets rot er `/root` selv, ikke en dedikert undermappe. Det betyr at andre filer i /root (SSH-nøkler, bash-historikk, .git-credentials) i teorien kan havne i git ved en uforsiktig `git add -A`. `.gitignore` dekker de kjente filene i dag, men en dedikert undermappe (f.eks. `/root/ansible-homelab/`) som git-rot ville vært tryggere. Se Åpne punkter.
+**Strukturell svakhet fikset 20. august (Fase 26):** Git-repoets rot var tidligere `/root` selv, ikke en dedikert undermappe — andre filer i /root (SSH-nøkler, bash-historikk, .git-credentials) kunne i teorien havne i git ved en uforsiktig `git add -A`. Flyttet til `/root/ansible-homelab/` — se v2.11→v2.12-changelog for full diagnostikk og verifisering. Repo-rot er nå `/root/ansible-homelab` på mgmt-node.
 
 Primær orkestrerings-metode ("host-exec"):
 
@@ -357,6 +366,7 @@ Host opnsense
 | Fase 23 — Cache-bug rotårsak funnet og fikset | Homepage sin kildekode (v1.13.2, `src/pages/index.jsx`) lest direkte fra GitHub — bekreftet ren SSG uten `revalidate:`, regenerering skjer kun via klient-side `localStorage`-hash-sammenligning → `/api/revalidate`. Manuelt `curl .../api/revalidate`-kall testet og bekreftet: umiddelbar, deterministisk regenerering med reelt innhold, reprodusert over flere sjekker | Dashbordet viser nå pålitelig reelt innhold. Automatisering av kallet ved container-oppstart gjenstår (se Åpne punkter) — Fase 4 (sanitert skjermbilde) kan nå fortsette |
 | Fase 24 — Sanitert skjermbilde tatt og publisert (Fase 4 fullført) | Ny widget-fri variant av services.yaml (kun icon/href/description, ingen `widgets:`) pushet midlertidig til CT 203 (reelle `services.yaml`/`widgets.yaml` sikkerhetskopiert først). `widgets.yaml` sin `resources`-widget (viser CT 203 sin reelle CPU/RAM/disk) fjernet midlertidig av samme grunn — ekte live telemetri, ikke bare en uoppnåelig-URL-risiko. Skjermbilde tatt med headless Chrome fra Mac-en via SSH-tunnel gjennom Proxmox-hosten (eneste kilde DOCKER-USER slipper gjennom på port 3000), med `--host-resolver-rules` for å matche `HOMEPAGE_ALLOWED_HOSTS` — ingen `/etc/hosts`-endring nødvendig. Rå HTML grep't for reelle IP-mønstre/token-fragmenter etterpå — ingen treff. Reelle `services.yaml`/`widgets.yaml` gjenopprettet fra backup (md5sum bekreftet identisk med original), revalidert, og verifisert stabilt over 4 separate sjekker | `docs/dashboard-sanitized.png` committet og pushet til github.com/Idiri/homelab (README pekte allerede til denne banen). Fase 4 ferdig |
 | Fase 25 — Ansible-provisjoneringstoken til minste privilegium | Opprinnelig `ansible`-token under `root@pam` (privsep=0, full root-ekvivalent) erstattet med nytt `ansible-provisioner@pve`-token, rolle `PVEVMAdmin`, opprettet manuelt på Proxmox-hosten. ACL verifisert på både bruker- og token-nivå via `pveum acl list`. Autentisering verifisert med to kjøringer av `deploy_ct.yml` fra mgmt-node (`ok=1, changed=0`, ingen 401/403 — no-op siden CT 201 allerede finnes, øver ikke selve opprettelses-koden). Opprinnelig root@pam-token revokert og bekreftet fjernet via `pveum user token list root@pam` | Ansible-provisjonering kjører nå på et dedikert, begrenset token — ingen gjenværende full-root-ekvivalent Ansible-credential |
+| Fase 26 — Ansible git-repo flyttet ut av /root | Alle 48 sporede filer + `.git` flyttet fra `/root` til `/root/ansible-homelab/` på mgmt-node. Live isolation-check-timeren sitt kjørende skript (`/root/isolation_check.sh`) ble midlertidig borte og umiddelbart gjenopprettet i samme operasjon — verifisert identisk (`diff`) med repo-kilden, og to uavhengige, tidsseparerte vellykkede timer-kjøringer bekreftet (`isolation.json` oppdatert kl. 16:50, 16:51 og 16:52, alle `status=0/SUCCESS`). Ingen andre systemd-enheter berørt (backups-check kjører på Proxmox sin egen /root, metasploitable-heartbeat på Kali sin egen /root) | Usporede sensitive filer i /root (SSH-nøkler, bash-historikk, .git-credentials) er nå strukturelt utenfor repoets working directory — ikke lenger avhengig kun av `.gitignore`/vane |
 
 ### Kritiske lærdommer
 
@@ -468,11 +478,11 @@ ssh kali "nmap 192.168.1.203"
 
 ### Ansible-endringer (nytt 16. juli)
 
-Alle endringer i `/root` på mgmt-node skal nå committes og pushes:
+Alle endringer i `/root/ansible-homelab` på mgmt-node skal nå committes og pushes:
 
 ```bash
 ssh mgmt
-cd /root
+cd /root/ansible-homelab
 git add <endrede filer>
 git commit -m "..."
 git push
@@ -498,7 +508,7 @@ git push
 | 🔴 Høy | Bytt fra root SSH til dedikerte brukere på alle noder | Ikke gjort |
 | 🔴 Høy | Begrens OPNsense admin-tilgang (port 22/80/443 på LAN) til kun Kali | Forsøkt 16. juli, ikke løst — OPNsense sine auto-genererte service-regler overstyrer både interface- og Floating-regler. Krever WAN-side omstrukturering (endre Listen Interfaces + eksplisitt WAN-regel for Kalis WAN-IP) |
 | ✅ Ferdig | Skaler ned Ansible API-token til minste privilegium | Nytt 16. juli, delvis adressert 24. juli (Homepage-widgetens PVEAuditor-token), fullført 20. august (Fase 25) — opprinnelig `ansible`-token under root@pam (privsep=0) revokert og erstattet med `ansible-provisioner@pve!ansible` (PVEVMAdmin, privsep=1). Verifiseringsbevis: `pveum acl list` viser korrekt ACL på bruker- og token-nivå, to vellykkede `deploy_ct.yml`-kjøringer fra mgmt-node uten auth-feil, og `pveum user token list root@pam` bekreftet tomt etter revokering. Se v2.10→v2.11-changelog |
-| 🟠 Medium | Restrukturer Ansible git-repo — flytt bort fra /root som repo-rot | Nytt 16. juli — /root som git-rot er en unødvendig blast-radius-risiko. Flytt til f.eks. /root/ansible-homelab/ |
+| ✅ Ferdig | Restrukturer Ansible git-repo — flytt bort fra /root som repo-rot | Nytt 16. juli, fullført 20. august (Fase 26) — flyttet til `/root/ansible-homelab/`. Verifiseringsbevis: `git status` rent umiddelbart etter flytting (kun relative stier, ingen historikk endret), live isolation-check-timer bekreftet uendret fungerende med to tidsseparerte kjøringer etter flyttingen. Se v2.11→v2.12-changelog |
 | 🟠 Medium | Offensiv testing av Nginx 1.22.1 på web-01 | Ikke startet |
 | 🟡 Lav | Legg til SIEM (Wazuh eller Security Onion) for nettverkssynlighet | Ikke startet |
 | 🟡 Lav | Sett opp reverse proxy foran web-01 | Ikke startet |
