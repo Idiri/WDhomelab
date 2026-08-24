@@ -11,11 +11,13 @@ echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.d
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# wazuh-indexer (OpenSearch) refuses to start below this -- official prerequisite.
-cat > /etc/sysctl.d/99-wazuh-indexer.conf <<'SYSCTL'
-vm.max_map_count=262144
-SYSCTL
-sysctl -p /etc/sysctl.d/99-wazuh-indexer.conf
+# wazuh-indexer (OpenSearch) refuses to start below vm.max_map_count=262144.
+# This is a host-wide kernel parameter, not namespaced -- an unprivileged LXC
+# container cannot set it (permission denied), so it must be set on the
+# Proxmox HOST itself (see /etc/sysctl.d/99-wazuh-indexer.conf there, and
+# docs/homelab.md Fase 28 for the failed-attempt diagnosis). Since the kernel
+# is shared, the container sees the host's value automatically -- nothing to
+# do here.
 
 git clone --branch v4.14.7 --depth 1 https://github.com/wazuh/wazuh-docker.git /opt/wazuh-docker
 cd /opt/wazuh-docker/single-node
