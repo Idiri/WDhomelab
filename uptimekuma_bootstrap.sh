@@ -41,7 +41,13 @@ iptables -I INPUT 5 -p tcp --dport 3001 -j DROP
 iptables -I DOCKER-USER 1 -i eth0 -s 192.168.1.204 -p tcp --dport 3001 -j RETURN
 iptables -I DOCKER-USER 2 -i eth0 -s 192.168.1.50 -p tcp --dport 3001 -j RETURN
 iptables -I DOCKER-USER 3 -i eth0 -s 192.168.1.202 -p tcp --dport 3001 -j RETURN
-iptables -I DOCKER-USER 4 -i eth0 -p tcp --dport 3001 -j DROP
+# Fase 27: rate-limited LOG rett foran DROP, for grunnleggende synlighet av
+# avviste forsøk. Krever net.netfilter.nf_log_all_netns=1 på Proxmox-hosten
+# (satt i /etc/sysctl.d/99-nf-log-netns.conf) — uten den blir LOG-mål inne i en
+# LXC-container sin netns stille forkastet av kjernen, uansett hva denne regelen
+# sier (bekreftet empirisk under Fase 27, se docs/homelab.md).
+iptables -I DOCKER-USER 4 -i eth0 -p tcp --dport 3001 -m limit --limit 10/min --limit-burst 20 -j LOG --log-prefix "CT204-3001-DROP: " --log-level 4
+iptables -I DOCKER-USER 5 -i eth0 -p tcp --dport 3001 -j DROP
 iptables-save > /etc/iptables/rules.v4
 
 # Bevisst IKKE lagt til: en tilsvarende FORWARD-regel på Proxmox-hosten for port
