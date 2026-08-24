@@ -81,12 +81,21 @@ DEBIAN_FRONTEND=noninteractive apt install -y iptables iptables-persistent
 # so DOCKER-USER is the only real enforcement layer, INPUT is a harmless second
 # layer for any future non-Docker traffic on these ports.
 #
-# Dashboard (443): same named-source pattern as Homepage/Kuma -- only
-# 192.168.1.50 (what Tailscale-forwarded traffic looks like after SNAT).
+# Dashboard: same named-source pattern as Homepage/Kuma -- only 192.168.1.50
+# (what Tailscale-forwarded traffic looks like after SNAT). IMPORTANT: the
+# compose maps this as "443:5601" (external:internal) -- unlike CT 203/204
+# where external==internal, Docker's DNAT rewrites the packet's destination
+# PORT to 5601 before it ever reaches FORWARD/DOCKER-USER, not just the IP.
+# A DOCKER-USER rule matching --dport 443 matches nothing and silently lets
+# everything through (found empirically during Fase 28 verification -- the
+# DROP rule's packet counter stayed at 0 while LAN access still succeeded).
+# The DOCKER-USER rule below matches the real post-DNAT port (5601); the
+# INPUT rule stays on 443 since that's the host-facing port for any future
+# non-Docker traffic (same harmless-second-layer reasoning as elsewhere).
 iptables -I INPUT -s 192.168.1.50 -p tcp --dport 443 -j ACCEPT
 iptables -I INPUT 2 -p tcp --dport 443 -j DROP
-iptables -I DOCKER-USER 1 -i eth0 -s 192.168.1.50 -p tcp --dport 443 -j RETURN
-iptables -I DOCKER-USER 2 -i eth0 -p tcp --dport 443 -j DROP
+iptables -I DOCKER-USER 1 -i eth0 -s 192.168.1.50 -p tcp --dport 5601 -j RETURN
+iptables -I DOCKER-USER 2 -i eth0 -p tcp --dport 5601 -j DROP
 
 # Agent ports (1514 events, 1515 enrollment): Fase 28 scope is Proxmox as the
 # only agent, so the only permitted source is Proxmox's own address. Expand
