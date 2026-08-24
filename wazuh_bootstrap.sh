@@ -28,6 +28,14 @@ cd /opt/wazuh-docker/single-node
 # to 1GB, so if memory pressure forces an OOM-kill, it takes Wazuh's own
 # container down, not homepage/uptime-kuma. See docs/homelab.md for the real
 # headroom numbers this was sized against.
+# Both wazuh.indexer and wazuh.manager's upstream compose declare
+# `ulimits.memlock: soft/hard: -1` (unlimited) -- Docker running inside an
+# unprivileged LXC can't grant that (OCI runtime create fails: "error setting
+# rlimit type 8: operation not permitted", rlimit 8 = RLIMIT_MEMLOCK).
+# `bootstrap.memory_lock` is not enabled anywhere in the compose, so nothing
+# in the app actually depends on this beyond container-creation itself --
+# capping to CT 205's own ceiling (`ulimit -l` = 8192 KB = 8388608 bytes) is
+# sufficient, not a functional degradation.
 cat > docker-compose.override.yml <<'OVERRIDE'
 services:
   wazuh.indexer:
@@ -35,9 +43,17 @@ services:
     mem_reservation: 1g
     environment:
       - OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g
+    ulimits:
+      memlock:
+        soft: 8388608
+        hard: 8388608
   wazuh.manager:
     mem_limit: 1g
     mem_reservation: 512m
+    ulimits:
+      memlock:
+        soft: 8388608
+        hard: 8388608
   wazuh.dashboard:
     mem_limit: 1g
     mem_reservation: 512m
