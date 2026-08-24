@@ -36,6 +36,13 @@ cd /opt/wazuh-docker/single-node
 # in the app actually depends on this beyond container-creation itself --
 # capping to CT 205's own ceiling (`ulimit -l` = 8192 KB = 8388608 bytes) is
 # sufficient, not a functional degradation.
+#
+# Second, separate hit found empirically: wazuh.manager's upstream compose
+# also requests `nofile: soft/hard: 655360`, which exceeds CT 205's own hard
+# nofile ceiling (`ulimit -Hn` = 524288) -- same class of error, rlimit type 7
+# (RLIMIT_NOFILE). wazuh.indexer requests only 65536 for the same setting
+# (why it started fine on the first pass) -- matching that value for manager
+# here, well within the container's actual ceiling.
 cat > docker-compose.override.yml <<'OVERRIDE'
 services:
   wazuh.indexer:
@@ -54,6 +61,9 @@ services:
       memlock:
         soft: 8388608
         hard: 8388608
+      nofile:
+        soft: 65536
+        hard: 65536
   wazuh.dashboard:
     mem_limit: 1g
     mem_reservation: 512m
