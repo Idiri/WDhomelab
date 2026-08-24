@@ -1,0 +1,28 @@
+---
+# Samme "host-exec" pct-create-mønster som deploy_homepage.yml / deploy_uptimekuma.yml.
+# Fase 28: Wazuh single-node SIEM. Egen container (205), IP .206 (ikke .205 --
+# CT 204/uptime-kuma har allerede den). rootfs på local-lvm (ikke local, som var
+# 95% full under Fase 27-scoping) -- se docs/homelab.md for full ressurssjekk.
+- name: Deploy Wazuh container
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Opprett Wazuh container 205
+      command: >
+        ssh root@192.168.1.50
+        pct create 205
+        local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst
+        --hostname wazuh
+        --cores 4
+        --memory 5120
+        --swap 512
+        --rootfs local-lvm:20
+        --net0 name=eth0,bridge=vmbr0,ip=192.168.1.206/24,gw=192.168.1.254
+        --nameserver 8.8.8.8
+        --unprivileged 1
+        --features nesting=1
+
+    - name: Start Wazuh container
+      command: "ssh root@192.168.1.50 pct start 205"

@@ -1,0 +1,20 @@
+---
+# Samme mønster som setup_homepage.yml / setup_uptimekuma.yml: staging via
+# scp til Proxmox, deretter pct push inn i containeren, kjør, rydd opp.
+- name: Deploy Wazuh single-node stack to CT 205
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Kopier wazuh_bootstrap.sh til Proxmox
+      command: "scp wazuh_bootstrap.sh root@192.168.1.50:/root/wazuh_bootstrap.sh"
+
+    - name: pct push wazuh_bootstrap.sh inn i CT 205
+      command: "ssh root@192.168.1.50 pct push 205 /root/wazuh_bootstrap.sh /root/wazuh_bootstrap.sh"
+
+    - name: Kjør wazuh_bootstrap.sh inne i containeren
+      command: "ssh root@192.168.1.50 pct exec 205 -- sh /root/wazuh_bootstrap.sh"
+
+    - name: Rydd opp midlertidig fil på Proxmox
+      command: "ssh root@192.168.1.50 rm -f /root/wazuh_bootstrap.sh"
